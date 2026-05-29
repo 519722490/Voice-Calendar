@@ -37,10 +37,33 @@ type CalendarDay = {
 }
 
 type VoiceStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error'
+type AgentMode = 'review' | 'auto'
+
+type PendingAgentAction = {
+  id: string
+  expiresAt: string
+  action: string
+  eventId: number
+  title?: string | null
+  date?: string | null
+  startTime?: string | null
+  endTime?: string | null
+  location?: string | null
+  description?: string | null
+  tag?: string | null
+  reminderTime?: string | null
+}
 
 type AgentChatResponse = {
   content: string
   aiEnabled: boolean
+  success: boolean
+  mode: AgentMode
+  action: string
+  needsConfirmation: boolean
+  event: CalendarEvent | null
+  candidates: CalendarEvent[]
+  pendingAction: PendingAgentAction | null
 }
 
 type UserProfile = {
@@ -103,6 +126,8 @@ const voiceStatus = ref<VoiceStatus>('idle')
 const voiceError = ref('')
 const voiceAgentMessage = ref('')
 const voiceAgentSubmitting = ref(false)
+const voiceAgentMode = ref<AgentMode>('review')
+const pendingAgentAction = ref<PendingAgentAction | null>(null)
 const editingEvent = ref<CalendarEvent | null>(null)
 const pendingDeleteId = ref<number | null>(null)
 let speechSocket: WebSocket | null = null
@@ -373,6 +398,7 @@ function openVoiceForm() {
   finalVoiceText = ''
   voiceError.value = ''
   voiceAgentMessage.value = ''
+  pendingAgentAction.value = null
   voiceConversationId = `voice-${Date.now()}`
   voiceStatus.value = 'idle'
   isVoiceFormOpen.value = true
@@ -393,6 +419,7 @@ async function startVoiceRecognition() {
   finalVoiceText = ''
   voiceError.value = ''
   voiceAgentMessage.value = ''
+  pendingAgentAction.value = null
   voiceStatus.value = 'connecting'
 
   try {
@@ -420,6 +447,7 @@ async function submitVoiceToAgent() {
 
   voiceError.value = ''
   voiceAgentMessage.value = ''
+  pendingAgentAction.value = null
   voiceAgentSubmitting.value = true
 
   try {
@@ -431,6 +459,7 @@ async function submitVoiceToAgent() {
       body: JSON.stringify({
         message,
         conversationId: voiceConversationId,
+        mode: voiceAgentMode.value,
       }),
     })
 
@@ -440,9 +469,42 @@ async function submitVoiceToAgent() {
 
     const data = (await response.json()) as AgentChatResponse
     voiceAgentMessage.value = data.content
+    pendingAgentAction.value = data.needsConfirmation ? data.pendingAction : null
     await loadEvents()
   } catch (error) {
     voiceError.value = error instanceof Error ? error.message : '发送给 Agent 失败'
+  } finally {
+    voiceAgentSubmitting.value = false
+  }
+}
+
+async function confirmPendingAgentAction() {
+  if (!pendingAgentAction.value || voiceAgentSubmitting.value) {
+    return
+  }
+
+  voiceError.value = ''
+  voiceAgentSubmitting.value = true
+
+  try {
+    const response = await authorizedFetch(`${API_BASE_URL}/api/agent/confirm`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ id: pendingAgentAction.value.id }),
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseMessage(response))
+    }
+
+    const data = (await response.json()) as AgentChatResponse
+    voiceAgentMessage.value = data.content
+    pendingAgentAction.value = data.needsConfirmation ? data.pendingAction : null
+    await loadEvents()
+  } catch (error) {
+    voiceError.value = error instanceof Error ? error.message : '确认执行失败'
   } finally {
     voiceAgentSubmitting.value = false
   }
@@ -1106,6 +1168,23 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
             </div>
           </div>
 
+          <div class="agent-mode-switch field-full" role="group" aria-label="Agent 执行模式">
+            <button
+              type="button"
+              :class="{ active: voiceAgentMode === 'review' }"
+              @click="voiceAgentMode = 'review'"
+            >
+              稳妥模式
+            </button>
+            <button
+              type="button"
+              :class="{ active: voiceAgentMode === 'auto' }"
+              @click="voiceAgentMode = 'auto'"
+            >
+              自动模式
+            </button>
+          </div>
+
           <label class="field field-full">
             <span>识别文本</span>
             <textarea
@@ -1120,6 +1199,15 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
           <div v-if="voiceAgentMessage" class="agent-response field-full">
             <span>Agent 回复</span>
             <p>{{ voiceAgentMessage }}</p>
+            <button
+              v-if="pendingAgentAction"
+              class="primary-button voice-confirm-button"
+              type="button"
+              :disabled="voiceAgentSubmitting"
+              @click="confirmPendingAgentAction"
+            >
+              确认执行
+            </button>
           </div>
 
           <footer class="form-actions field-full">

@@ -10,9 +10,9 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class AgentConfig {
-    @Bean
+    @Bean("voiceCalendarAutoChatClient")
     @ConditionalOnProperty(prefix = "voice-calendar.ai", name = "enabled", havingValue = "true")
-    public ChatClient voiceCalendarChatClient(
+    public ChatClient voiceCalendarAutoChatClient(
             ChatModel chatModel,
             CalendarEventTools calendarEventTools,
             CurrentTimeTools currentTimeTools
@@ -32,6 +32,17 @@ public class AgentConfig {
                         8. 回答要简洁，明确告诉用户操作结果。
                         """)
                 .defaultTools(calendarEventTools, currentTimeTools)
+                .build();
+    }
+
+    @Bean("voiceCalendarReviewChatClient")
+    @ConditionalOnProperty(prefix = "voice-calendar.ai", name = "enabled", havingValue = "true")
+    public ChatClient voiceCalendarReviewChatClient(ChatModel chatModel) {
+        return ChatClient.builder(chatModel)
+                .defaultSystem("""
+                        你是一个语音日历意图解析器，只负责把用户输入解析成 JSON，不允许执行任何真实操作。
+                        必须只输出一个合法 JSON 对象，不要输出 Markdown、解释文字或代码块。
+                        """)
                 .build();
     }
 }

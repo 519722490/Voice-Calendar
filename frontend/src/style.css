@@ -538,6 +538,44 @@ h3 {
   gap: 7px;
 }
 
+.voice-confirm-button {
+  justify-self: start;
+}
+
+.agent-mode-switch {
+  display: inline-grid;
+  width: fit-content;
+  grid-template-columns: repeat(2, minmax(92px, 1fr));
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  background: #f8fafc;
+}
+
+.agent-mode-switch button {
+  min-height: 32px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.agent-mode-switch button.active {
+  background: #ffffff;
+  color: var(--accent-strong);
+  box-shadow: 0 1px 4px rgba(14, 30, 37, 0.08);
+}
+
+.agent-mode-switch button:focus-visible {
+  outline: 3px solid rgba(38, 114, 111, 0.14);
+}
+
 .voice-status {
   display: inline-flex;
   min-height: 34px;
