@@ -1,6 +1,6 @@
 package com.cyx.backend.common;
 
-import com.cyx.backend.event.EventNotFoundException;
+import com.cyx.backend.exception.EventNotFoundException;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
