@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { Mic, Square } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 type CalendarEvent = {
   id: number
@@ -35,7 +36,10 @@ type CalendarDay = {
   hasSchedule: boolean
 }
 
+type VoiceStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error'
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
+const SPEECH_WS_URL = buildSpeechWsUrl(API_BASE_URL)
 
 const weekDays = ['一', '二', '三', '四', '五', '六', '日']
 const monthNames = [
@@ -62,8 +66,19 @@ const saving = ref(false)
 const errorMessage = ref('')
 const formError = ref('')
 const isFormOpen = ref(false)
+const isVoiceFormOpen = ref(false)
+const voiceText = ref('')
+const voiceStatus = ref<VoiceStatus>('idle')
+const voiceError = ref('')
 const editingEvent = ref<CalendarEvent | null>(null)
 const pendingDeleteId = ref<number | null>(null)
+let speechSocket: WebSocket | null = null
+let audioContext: AudioContext | null = null
+let mediaStream: MediaStream | null = null
+let mediaSourceNode: MediaStreamAudioSourceNode | null = null
+let audioWorkletNode: AudioWorkletNode | null = null
+let silenceGainNode: GainNode | null = null
+let finalVoiceText = ''
 
 const form = reactive<EventForm>({
   title: '',
@@ -86,6 +101,26 @@ const selectedDateKey = computed(() => toDateKey(selectedDate.value))
 const selectedTitle = computed(() => {
   const date = selectedDate.value
   return `${date.getMonth() + 1}月${date.getDate()}日`
+})
+
+const voiceStatusText = computed(() => {
+  const statusText: Record<VoiceStatus, string> = {
+    idle: '未开始',
+    connecting: '正在连接',
+    recording: '正在录音',
+    stopping: '正在结束',
+    error: '连接异常',
+  }
+
+  return statusText[voiceStatus.value]
+})
+
+const canStartVoice = computed(() => {
+  return voiceStatus.value === 'idle' || voiceStatus.value === 'error'
+})
+
+const canStopVoice = computed(() => {
+  return voiceStatus.value === 'connecting' || voiceStatus.value === 'recording'
 })
 
 const scheduleDates = computed(() => {
@@ -131,6 +166,11 @@ onMounted(() => {
   loadEvents()
 })
 
+onBeforeUnmount(() => {
+  cleanupSpeechSocket()
+  stopAudioCapture()
+})
+
 async function loadEvents() {
   loading.value = true
   errorMessage.value = ''
@@ -164,6 +204,231 @@ function moveMonth(step: number) {
 function backToToday() {
   selectedDate.value = today
   visibleMonth.value = new Date(today.getFullYear(), today.getMonth(), 1)
+}
+
+function openVoiceForm() {
+  voiceText.value = ''
+  finalVoiceText = ''
+  voiceError.value = ''
+  voiceStatus.value = 'idle'
+  isVoiceFormOpen.value = true
+}
+
+function closeVoiceForm() {
+  cleanupSpeechSocket()
+  stopAudioCapture()
+  isVoiceFormOpen.value = false
+}
+
+async function startVoiceRecognition() {
+  if (!canStartVoice.value) {
+    return
+  }
+
+  voiceText.value = ''
+  finalVoiceText = ''
+  voiceError.value = ''
+  voiceStatus.value = 'connecting'
+
+  try {
+    await prepareAudioCapture()
+    connectSpeechSocket()
+  } catch (error) {
+    voiceStatus.value = 'error'
+    voiceError.value = error instanceof Error ? error.message : '启动录音失败'
+    stopAudioCapture()
+    cleanupSpeechSocket()
+  }
+}
+
+function stopVoiceRecognition() {
+  if (!canStopVoice.value) {
+    return
+  }
+
+  stopAudioCapture()
+  voiceStatus.value = 'stopping'
+
+  if (speechSocket?.readyState === WebSocket.OPEN) {
+    speechSocket.send(JSON.stringify({ type: 'stop' }))
+    return
+  }
+
+  cleanupSpeechSocket()
+  voiceStatus.value = 'idle'
+}
+
+async function prepareAudioCapture() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('当前浏览器不支持麦克风录音')
+  }
+
+  const AudioContextClass =
+    window.AudioContext ??
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+
+  if (!AudioContextClass) {
+    throw new Error('当前浏览器不支持 Web Audio')
+  }
+
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  })
+
+  audioContext = new AudioContextClass()
+  await audioContext.audioWorklet.addModule('/pcm-worklet.js')
+
+  mediaSourceNode = audioContext.createMediaStreamSource(mediaStream)
+  audioWorkletNode = new AudioWorkletNode(audioContext, 'pcm-worklet-processor', {
+    processorOptions: {
+      targetSampleRate: 16000,
+      frameDurationMs: 100,
+    },
+  })
+  silenceGainNode = audioContext.createGain()
+  silenceGainNode.gain.value = 0
+
+  audioWorkletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
+    if (voiceStatus.value !== 'recording') {
+      return
+    }
+
+    if (speechSocket?.readyState === WebSocket.OPEN) {
+      speechSocket.send(event.data)
+    }
+  }
+
+  mediaSourceNode.connect(audioWorkletNode)
+  audioWorkletNode.connect(silenceGainNode)
+  silenceGainNode.connect(audioContext.destination)
+}
+
+function connectSpeechSocket() {
+  cleanupSpeechSocket()
+
+  speechSocket = new WebSocket(SPEECH_WS_URL)
+  speechSocket.binaryType = 'arraybuffer'
+
+  speechSocket.onopen = () => {
+    speechSocket?.send(JSON.stringify({ type: 'start' }))
+  }
+
+  speechSocket.onmessage = (event) => {
+    handleSpeechMessage(event.data)
+  }
+
+  speechSocket.onerror = () => {
+    voiceStatus.value = 'error'
+    voiceError.value = '语音连接失败，请确认后端和语音识别配置正常'
+    stopAudioCapture()
+  }
+
+  speechSocket.onclose = () => {
+    if (voiceStatus.value === 'recording' || voiceStatus.value === 'connecting') {
+      voiceStatus.value = 'idle'
+    }
+    stopAudioCapture()
+  }
+}
+
+function handleSpeechMessage(rawMessage: unknown) {
+  if (typeof rawMessage !== 'string') {
+    return
+  }
+
+  const data = JSON.parse(rawMessage) as {
+    type?: string
+    message?: string
+    text?: string
+    final?: boolean
+  }
+
+  if (data.type === 'ready') {
+    voiceStatus.value = 'recording'
+    return
+  }
+
+  if (data.type === 'transcript' && data.text) {
+    updateVoiceText(data.text, Boolean(data.final))
+    return
+  }
+
+  if (data.type === 'finished' || data.type === 'stopped' || data.type === 'closed') {
+    voiceStatus.value = 'idle'
+    cleanupSpeechSocket()
+    stopAudioCapture()
+    return
+  }
+
+  if (data.type === 'error') {
+    voiceStatus.value = 'error'
+    voiceError.value = data.message ?? '语音识别失败'
+    cleanupSpeechSocket()
+    stopAudioCapture()
+  }
+}
+
+function updateVoiceText(text: string, isFinal: boolean) {
+  if (isFinal) {
+    finalVoiceText = appendVoiceText(finalVoiceText, text)
+    voiceText.value = finalVoiceText
+    return
+  }
+
+  voiceText.value = `${finalVoiceText}${text}`
+}
+
+function appendVoiceText(current: string, next: string) {
+  if (!current) {
+    return next
+  }
+
+  if (current.endsWith(next)) {
+    return current
+  }
+
+  return `${current}${next}`
+}
+
+function cleanupSpeechSocket() {
+  const socket = speechSocket
+  speechSocket = null
+
+  if (!socket) {
+    return
+  }
+
+  socket.onopen = null
+  socket.onmessage = null
+  socket.onerror = null
+  socket.onclose = null
+
+  if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+    socket.close()
+  }
+}
+
+function stopAudioCapture() {
+  audioWorkletNode?.port.close()
+  audioWorkletNode?.disconnect()
+  silenceGainNode?.disconnect()
+  mediaSourceNode?.disconnect()
+  mediaStream?.getTracks().forEach((track) => track.stop())
+
+  if (audioContext?.state !== 'closed') {
+    void audioContext?.close()
+  }
+
+  audioWorkletNode = null
+  silenceGainNode = null
+  mediaSourceNode = null
+  mediaStream = null
+  audioContext = null
 }
 
 function openCreateForm() {
@@ -352,6 +617,15 @@ function addDays(date: Date, days: number) {
 function isSameDate(left: Date, right: Date) {
   return toDateKey(left) === toDateKey(right)
 }
+
+function buildSpeechWsUrl(apiBaseUrl: string) {
+  const url = new URL(apiBaseUrl)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = '/ws/speech'
+  url.search = ''
+  url.hash = ''
+  return url.toString()
+}
 </script>
 
 <template>
@@ -362,6 +636,15 @@ function isSameDate(left: Date, right: Date) {
         <h1>语音日历</h1>
       </div>
       <div class="header-actions">
+        <button
+          class="icon-button mic-button"
+          type="button"
+          title="语音输入"
+          aria-label="语音输入"
+          @click="openVoiceForm"
+        >
+          <Mic :size="18" :stroke-width="2.4" aria-hidden="true" />
+        </button>
         <button class="today-button" type="button" @click="backToToday">今天</button>
         <button class="primary-button" type="button" @click="openCreateForm">添加日程</button>
       </div>
@@ -507,6 +790,60 @@ function isSameDate(left: Date, right: Date) {
             <button class="primary-button" type="submit" :disabled="saving">
               {{ saving ? '保存中...' : editingEvent ? '保存修改' : '创建日程' }}
             </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div v-if="isVoiceFormOpen" class="modal-backdrop" @click.self="closeVoiceForm">
+      <section class="modal voice-modal" role="dialog" aria-modal="true" aria-labelledby="voice-form-title">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">Voice Input</p>
+            <h2 id="voice-form-title">语音内容</h2>
+          </div>
+          <button class="icon-button" type="button" aria-label="关闭" @click="closeVoiceForm">×</button>
+        </header>
+
+        <form class="event-form voice-form" @submit.prevent="closeVoiceForm">
+          <div class="voice-control-bar field-full">
+            <span class="voice-status" :class="voiceStatus">{{ voiceStatusText }}</span>
+            <div class="voice-actions">
+              <button
+                class="primary-button voice-action-button"
+                type="button"
+                :disabled="!canStartVoice"
+                @click="startVoiceRecognition"
+              >
+                <Mic :size="16" :stroke-width="2.4" aria-hidden="true" />
+                <span>开始录音</span>
+              </button>
+              <button
+                class="today-button voice-action-button"
+                type="button"
+                :disabled="!canStopVoice"
+                @click="stopVoiceRecognition"
+              >
+                <Square :size="15" :stroke-width="2.4" aria-hidden="true" />
+                <span>停止</span>
+              </button>
+            </div>
+          </div>
+
+          <label class="field field-full">
+            <span>识别文本</span>
+            <textarea
+              v-model="voiceText"
+              rows="7"
+              placeholder="例如：今天下午三点开项目会"
+            ></textarea>
+          </label>
+
+          <p v-if="voiceError" class="notice error field-full">{{ voiceError }}</p>
+
+          <footer class="form-actions field-full">
+            <button class="today-button" type="button" @click="closeVoiceForm">取消</button>
+            <button class="primary-button" type="submit">确定</button>
           </footer>
         </form>
       </section>

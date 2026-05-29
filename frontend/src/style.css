@@ -192,11 +192,23 @@ h3 {
 }
 
 .icon-button {
+  display: inline-grid;
+  place-items: center;
   width: 38px;
   height: 38px;
   border-radius: var(--radius);
   font-size: 22px;
   line-height: 1;
+}
+
+.mic-button {
+  border-color: rgba(38, 114, 111, 0.28);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.mic-button:hover {
+  background: #c8e5e2;
 }
 
 .week-row,
@@ -419,6 +431,66 @@ h3 {
   padding: 20px;
 }
 
+.voice-modal {
+  width: min(560px, 100%);
+}
+
+.voice-form {
+  grid-template-columns: 1fr;
+}
+
+.voice-control-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.voice-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.voice-action-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.voice-status {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 12px;
+  background: #f8fafc;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.voice-status.connecting,
+.voice-status.stopping {
+  border-color: #ecd0a8;
+  background: #fff8ed;
+  color: var(--warning);
+}
+
+.voice-status.recording {
+  border-color: rgba(38, 114, 111, 0.3);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.voice-status.error {
+  border-color: #f2b8b5;
+  background: #fff0ef;
+  color: #9a322c;
+}
+
 .field {
   display: grid;
   gap: 7px;
@@ -488,6 +560,10 @@ h3 {
     flex: 1;
   }
 
+  .header-actions .mic-button {
+    flex: 0 0 40px;
+  }
+
   h1 {
     font-size: 28px;
   }
@@ -535,6 +611,19 @@ h3 {
 
   .event-form {
     grid-template-columns: 1fr;
+  }
+
+  .voice-control-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .voice-actions {
+    flex-direction: column;
+  }
+
+  .voice-status {
+    justify-content: center;
   }
 
   .form-actions {
