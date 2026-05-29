@@ -3,6 +3,7 @@ package com.cyx.backend.controller;
 import com.cyx.backend.dto.CalendarEvent;
 import com.cyx.backend.dto.EventRequest;
 import com.cyx.backend.service.CalendarEventService;
+import com.cyx.backend.service.CurrentUserService;
 import jakarta.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
@@ -23,9 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/events")
 public class CalendarEventController {
     private final CalendarEventService eventService;
+    private final CurrentUserService currentUserService;
 
-    public CalendarEventController(CalendarEventService eventService) {
+    public CalendarEventController(CalendarEventService eventService, CurrentUserService currentUserService) {
         this.eventService = eventService;
+        this.currentUserService = currentUserService;
     }
 
     @GetMapping
@@ -34,28 +37,28 @@ public class CalendarEventController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
             LocalDate date
     ) {
-        return eventService.findEvents(date);
+        return eventService.findEvents(currentUserService.requireCurrentUserId(), date);
     }
 
     @GetMapping("/{id}")
     public CalendarEvent getEvent(@PathVariable Long id) {
-        return eventService.getEvent(id);
+        return eventService.getEvent(currentUserService.requireCurrentUserId(), id);
     }
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public CalendarEvent createEvent(@Valid @RequestBody EventRequest request) {
-        return eventService.createEvent(request);
+        return eventService.createEvent(currentUserService.requireCurrentUserId(), request);
     }
 
     @PutMapping("/{id}")
     public CalendarEvent updateEvent(@PathVariable Long id, @Valid @RequestBody EventRequest request) {
-        return eventService.updateEvent(id, request);
+        return eventService.updateEvent(currentUserService.requireCurrentUserId(), id, request);
     }
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteEvent(@PathVariable Long id) {
-        eventService.deleteEvent(id);
+        eventService.deleteEvent(currentUserService.requireCurrentUserId(), id);
     }
 }

@@ -5,7 +5,6 @@ import com.cyx.backend.dto.EventRequest;
 import com.cyx.backend.entity.CalendarEventEntity;
 import com.cyx.backend.exception.EventNotFoundException;
 import com.cyx.backend.repository.CalendarEventJpaRepository;
-import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -21,48 +20,11 @@ public class CalendarEventService {
         this.repository = repository;
     }
 
-    @PostConstruct
-    @Transactional
-    void seedDemoEvents() {
-        if (repository.count() > 0) {
-            return;
-        }
-
-        LocalDate today = LocalDate.now();
-        createEvent(new EventRequest(
-                "整理今日日程",
-                today.atTime(9, 0),
-                today.atTime(9, 30),
-                "语音日历原型",
-                "确认今天要完成的功能和接口",
-                "计划",
-                today.atTime(8, 50)
-        ));
-        createEvent(new EventRequest(
-                "项目功能评审",
-                today.atTime(14, 30),
-                today.atTime(15, 30),
-                "线上会议",
-                "讨论日程 CRUD 和前端接入方式",
-                "会议",
-                today.atTime(14, 10)
-        ));
-        createEvent(new EventRequest(
-                "准备演示脚本",
-                today.plusDays(2).atTime(16, 0),
-                today.plusDays(2).atTime(17, 0),
-                "答辩材料",
-                "梳理语音创建和查询日程的演示路径",
-                "演示",
-                null
-        ));
-    }
-
     @Transactional(readOnly = true)
-    public List<CalendarEvent> findEvents(LocalDate date) {
+    public List<CalendarEvent> findEvents(Long userId, LocalDate date) {
         List<CalendarEventEntity> events = date == null
-                ? repository.findAllByOrderByStartTimeAsc()
-                : repository.findEventsOnDate(date.atStartOfDay(), date.plusDays(1).atStartOfDay());
+                ? repository.findAllByUserIdOrderByStartTimeAsc(userId)
+                : repository.findEventsOnDate(userId, date.atStartOfDay(), date.plusDays(1).atStartOfDay());
 
         return events.stream()
                 .map(this::toResponse)
@@ -70,18 +32,19 @@ public class CalendarEventService {
     }
 
     @Transactional(readOnly = true)
-    public CalendarEvent getEvent(Long id) {
-        return repository.findById(id)
+    public CalendarEvent getEvent(Long userId, Long id) {
+        return repository.findByIdAndUserId(id, userId)
                 .map(this::toResponse)
                 .orElseThrow(() -> new EventNotFoundException(id));
     }
 
     @Transactional
-    public CalendarEvent createEvent(EventRequest request) {
+    public CalendarEvent createEvent(Long userId, EventRequest request) {
         validateTimeRange(request.startTime(), request.endTime());
         Instant now = Instant.now();
         CalendarEventEntity event = repository.save(new CalendarEventEntity(
                 null,
+                userId,
                 normalizeTitle(request.title()),
                 request.startTime(),
                 request.endTime(),
@@ -96,12 +59,13 @@ public class CalendarEventService {
     }
 
     @Transactional
-    public CalendarEvent updateEvent(Long id, EventRequest request) {
-        CalendarEventEntity existing = repository.findById(id)
+    public CalendarEvent updateEvent(Long userId, Long id, EventRequest request) {
+        CalendarEventEntity existing = repository.findByIdAndUserId(id, userId)
                 .orElseThrow(() -> new EventNotFoundException(id));
         validateTimeRange(request.startTime(), request.endTime());
         CalendarEventEntity event = repository.save(new CalendarEventEntity(
                 existing.getId(),
+                userId,
                 normalizeTitle(request.title()),
                 request.startTime(),
                 request.endTime(),
@@ -116,11 +80,11 @@ public class CalendarEventService {
     }
 
     @Transactional
-    public void deleteEvent(Long id) {
-        if (!repository.existsById(id)) {
+    public void deleteEvent(Long userId, Long id) {
+        if (!repository.existsByIdAndUserId(id, userId)) {
             throw new EventNotFoundException(id);
         }
-        repository.deleteById(id);
+        repository.deleteByIdAndUserId(id, userId);
     }
 
     private void validateTimeRange(LocalDateTime startTime, LocalDateTime endTime) {

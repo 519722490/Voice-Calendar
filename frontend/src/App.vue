@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Mic, Send, Square } from 'lucide-vue-next'
+import { LogOut, Mic, Send, Square } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 type CalendarEvent = {
@@ -43,8 +43,28 @@ type AgentChatResponse = {
   aiEnabled: boolean
 }
 
+type UserProfile = {
+  id: number
+  username: string
+  displayName: string | null
+  createdAt: string
+}
+
+type AuthResponse = {
+  token: string
+  user: UserProfile
+}
+
+type AuthMode = 'login' | 'register'
+
+type AuthForm = {
+  username: string
+  password: string
+  displayName: string
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
-const SPEECH_WS_URL = buildSpeechWsUrl(API_BASE_URL)
+const TOKEN_STORAGE_KEY = 'voice-calendar-token'
 
 const weekDays = ['一', '二', '三', '四', '五', '六', '日']
 const monthNames = [
@@ -70,6 +90,12 @@ const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
 const formError = ref('')
+const authToken = ref(localStorage.getItem(TOKEN_STORAGE_KEY))
+const currentUser = ref<UserProfile | null>(null)
+const authMode = ref<AuthMode>('login')
+const authChecking = ref(Boolean(authToken.value))
+const authSubmitting = ref(false)
+const authError = ref('')
 const isFormOpen = ref(false)
 const isVoiceFormOpen = ref(false)
 const voiceText = ref('')
@@ -97,6 +123,12 @@ const form = reactive<EventForm>({
   description: '',
   tag: '',
   reminderTime: '',
+})
+
+const authForm = reactive<AuthForm>({
+  username: '',
+  password: '',
+  displayName: '',
 })
 
 const visibleTitle = computed(() => {
@@ -175,7 +207,7 @@ const calendarDays = computed<CalendarDay[]>(() => {
 })
 
 onMounted(() => {
-  loadEvents()
+  void initializeAuth()
 })
 
 onBeforeUnmount(() => {
@@ -183,12 +215,130 @@ onBeforeUnmount(() => {
   stopAudioCapture()
 })
 
+async function initializeAuth() {
+  if (!authToken.value) {
+    authChecking.value = false
+    return
+  }
+
+  try {
+    await loadCurrentUser()
+    await loadEvents()
+  } catch {
+    clearAuth()
+  } finally {
+    authChecking.value = false
+  }
+}
+
+async function submitAuth() {
+  authError.value = ''
+
+  if (!authForm.username.trim() || !authForm.password) {
+    authError.value = '请输入用户名和密码'
+    return
+  }
+
+  authSubmitting.value = true
+
+  try {
+    const body: Record<string, string> = {
+      username: authForm.username.trim(),
+      password: authForm.password,
+    }
+
+    if (authMode.value === 'register' && authForm.displayName.trim()) {
+      body.displayName = authForm.displayName.trim()
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/auth/${authMode.value}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseMessage(response))
+    }
+
+    const data = (await response.json()) as AuthResponse
+    setAuth(data)
+    await loadEvents()
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : '登录失败'
+  } finally {
+    authSubmitting.value = false
+  }
+}
+
+async function loadCurrentUser() {
+  const response = await authorizedFetch(`${API_BASE_URL}/api/auth/me`)
+
+  if (!response.ok) {
+    throw new Error(await getResponseMessage(response))
+  }
+
+  currentUser.value = (await response.json()) as UserProfile
+}
+
+function setAuth(data: AuthResponse) {
+  authToken.value = data.token
+  currentUser.value = data.user
+  localStorage.setItem(TOKEN_STORAGE_KEY, data.token)
+}
+
+function switchAuthMode(mode: AuthMode) {
+  authMode.value = mode
+  authError.value = ''
+}
+
+function logout() {
+  clearAuth()
+}
+
+function clearAuth() {
+  authToken.value = null
+  currentUser.value = null
+  events.value = []
+  errorMessage.value = ''
+  localStorage.removeItem(TOKEN_STORAGE_KEY)
+  closeForm()
+  closeVoiceForm()
+}
+
+async function authorizedFetch(input: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers)
+
+  if (authToken.value) {
+    headers.set('Authorization', `Bearer ${authToken.value}`)
+  }
+
+  const response = await fetch(input, {
+    ...init,
+    headers,
+  })
+
+  if (response.status === 401) {
+    clearAuth()
+    throw new Error('登录已过期，请重新登录')
+  }
+
+  return response
+}
+
 async function loadEvents() {
+  if (!authToken.value) {
+    events.value = []
+    return
+  }
+
   loading.value = true
   errorMessage.value = ''
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/events`)
+    const response = await authorizedFetch(`${API_BASE_URL}/api/events`)
     if (!response.ok) {
       throw new Error(await getResponseMessage(response))
     }
@@ -273,7 +423,7 @@ async function submitVoiceToAgent() {
   voiceAgentSubmitting.value = true
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/agent/chat`, {
+    const response = await authorizedFetch(`${API_BASE_URL}/api/agent/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -368,7 +518,11 @@ async function prepareAudioCapture() {
 function connectSpeechSocket() {
   cleanupSpeechSocket()
 
-  speechSocket = new WebSocket(SPEECH_WS_URL)
+  if (!authToken.value) {
+    throw new Error('请先登录后再使用语音识别')
+  }
+
+  speechSocket = new WebSocket(buildSpeechWsUrl(API_BASE_URL, authToken.value))
   speechSocket.binaryType = 'arraybuffer'
 
   speechSocket.onopen = () => {
@@ -547,7 +701,7 @@ async function submitForm() {
     const url = editingEvent.value
       ? `${API_BASE_URL}/api/events/${editingEvent.value.id}`
       : `${API_BASE_URL}/api/events`
-    const response = await fetch(url, {
+    const response = await authorizedFetch(url, {
       method: editingEvent.value ? 'PUT' : 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -582,7 +736,7 @@ async function confirmDelete(event: CalendarEvent) {
   errorMessage.value = ''
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/events/${event.id}`, {
+    const response = await authorizedFetch(`${API_BASE_URL}/api/events/${event.id}`, {
       method: 'DELETE',
     })
 
@@ -675,24 +829,89 @@ function isSameDate(left: Date, right: Date) {
   return toDateKey(left) === toDateKey(right)
 }
 
-function buildSpeechWsUrl(apiBaseUrl: string) {
+function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
   const url = new URL(apiBaseUrl)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   url.pathname = '/ws/speech'
-  url.search = ''
+  url.searchParams.set('token', token)
   url.hash = ''
   return url.toString()
 }
 </script>
 
 <template>
-  <main class="calendar-page">
+  <main v-if="!currentUser" class="auth-page">
+    <section class="auth-panel" aria-label="用户登录">
+      <header class="auth-header">
+        <p class="eyebrow">Voice Calendar</p>
+        <h1>语音日历</h1>
+      </header>
+
+      <div v-if="authChecking" class="empty-state">
+        <h3>正在恢复登录状态</h3>
+        <p>请稍等片刻。</p>
+      </div>
+
+      <form v-else class="auth-form" @submit.prevent="submitAuth">
+        <div class="auth-tabs" role="tablist" aria-label="登录方式">
+          <button
+            type="button"
+            :class="{ active: authMode === 'login' }"
+            @click="switchAuthMode('login')"
+          >
+            登录
+          </button>
+          <button
+            type="button"
+            :class="{ active: authMode === 'register' }"
+            @click="switchAuthMode('register')"
+          >
+            注册
+          </button>
+        </div>
+
+        <label class="field">
+          <span>用户名</span>
+          <input v-model="authForm.username" autocomplete="username" type="text" placeholder="demo" />
+        </label>
+
+        <label class="field">
+          <span>密码</span>
+          <input
+            v-model="authForm.password"
+            autocomplete="current-password"
+            type="password"
+            placeholder="123456"
+          />
+        </label>
+
+        <label v-if="authMode === 'register'" class="field">
+          <span>昵称</span>
+          <input v-model="authForm.displayName" autocomplete="nickname" type="text" placeholder="可不填" />
+        </label>
+
+        <p v-if="authError" class="notice error">{{ authError }}</p>
+
+        <button class="primary-button auth-submit" type="submit" :disabled="authSubmitting">
+          {{ authSubmitting ? '处理中...' : authMode === 'login' ? '登录' : '注册并登录' }}
+        </button>
+      </form>
+    </section>
+  </main>
+
+  <main v-else class="calendar-page">
     <header class="page-header">
       <div>
         <p class="eyebrow">Voice Calendar</p>
         <h1>语音日历</h1>
       </div>
       <div class="header-actions">
+        <div class="user-chip">
+          <span>{{ currentUser.displayName || currentUser.username }}</span>
+          <button class="icon-button" type="button" title="退出登录" aria-label="退出登录" @click="logout">
+            <LogOut :size="17" :stroke-width="2.4" aria-hidden="true" />
+          </button>
+        </div>
         <button
           class="icon-button mic-button"
           type="button"
