@@ -5,16 +5,23 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "calendar_events")
+@Table(
+        name = "calendar_events",
+        indexes = @Index(name = "idx_calendar_events_user_start_time", columnList = "user_id,startTime")
+)
 public class CalendarEventEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Column(name = "user_id")
+    private Long userId;
 
     @Column(nullable = false, length = 120)
     private String title;
@@ -46,6 +53,7 @@ public class CalendarEventEntity {
 
     public CalendarEventEntity(
             Long id,
+            Long userId,
             String title,
             LocalDateTime startTime,
             LocalDateTime endTime,
@@ -57,6 +65,7 @@ public class CalendarEventEntity {
             Instant updatedAt
     ) {
         this.id = id;
+        this.userId = userId;
         this.title = title;
         this.startTime = startTime;
         this.endTime = endTime;
@@ -70,6 +79,10 @@ public class CalendarEventEntity {
 
     public Long getId() {
         return id;
+    }
+
+    public Long getUserId() {
+        return userId;
     }
 
     public String getTitle() {

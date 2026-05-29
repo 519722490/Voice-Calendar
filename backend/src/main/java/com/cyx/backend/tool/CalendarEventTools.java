@@ -2,8 +2,9 @@ package com.cyx.backend.tool;
 
 import com.cyx.backend.dto.CalendarEvent;
 import com.cyx.backend.dto.CalendarToolResult;
-import com.cyx.backend.service.CalendarEventService;
 import com.cyx.backend.dto.EventRequest;
+import com.cyx.backend.service.CalendarEventService;
+import com.cyx.backend.service.CurrentUserService;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -15,9 +16,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class CalendarEventTools {
     private final CalendarEventService eventService;
+    private final CurrentUserService currentUserService;
 
-    public CalendarEventTools(CalendarEventService eventService) {
+    public CalendarEventTools(CalendarEventService eventService, CurrentUserService currentUserService) {
         this.eventService = eventService;
+        this.currentUserService = currentUserService;
     }
 
     @Tool(description = "创建新的日程。date 必须是 yyyy-MM-dd，startTime/endTime/reminderTime 必须是 HH:mm。只要用户表达了日程动作或内容，就可以把该动作或内容作为标题，例如“今天下午三点开会”的标题是“开会”。缺少日期或开始时间时不要调用。")
@@ -31,7 +34,7 @@ public class CalendarEventTools {
             @ToolParam(description = "标签，可选，例如：会议、学习、生活", required = false) String tag,
             @ToolParam(description = "提醒时间，格式 HH:mm，可选", required = false) String reminderTime
     ) {
-        CalendarEvent event = eventService.createEvent(toRequest(
+        CalendarEvent event = eventService.createEvent(currentUserService.requireCurrentUserId(), toRequest(
                 title,
                 date,
                 startTime,
@@ -49,14 +52,14 @@ public class CalendarEventTools {
             @ToolParam(description = "查询日期，格式 yyyy-MM-dd，可选", required = false) String date
     ) {
         LocalDate parsedDate = isBlank(date) ? null : LocalDate.parse(date);
-        return eventService.findEvents(parsedDate);
+        return eventService.findEvents(currentUserService.requireCurrentUserId(), parsedDate);
     }
 
     @Tool(description = "根据日程 id 查询单个日程详情。")
     public CalendarEvent getCalendarEvent(
             @ToolParam(description = "日程 id") Long id
     ) {
-        return eventService.getEvent(id);
+        return eventService.getEvent(currentUserService.requireCurrentUserId(), id);
     }
 
     @Tool(description = "修改已有日程。只在用户明确要修改某个 id 对应的日程时调用；未传的字段会保留原值。date 必须是 yyyy-MM-dd，时间必须是 HH:mm。")
@@ -71,7 +74,8 @@ public class CalendarEventTools {
             @ToolParam(description = "新标签，可选", required = false) String tag,
             @ToolParam(description = "新提醒时间，格式 HH:mm，可选", required = false) String reminderTime
     ) {
-        CalendarEvent existing = eventService.getEvent(id);
+        Long userId = currentUserService.requireCurrentUserId();
+        CalendarEvent existing = eventService.getEvent(userId, id);
         LocalDate resolvedDate = isBlank(date) ? existing.startTime().toLocalDate() : LocalDate.parse(date);
         String resolvedStartTime = isBlank(startTime) ? existing.startTime().toLocalTime().toString() : startTime;
         String resolvedEndTime = isBlank(endTime)
@@ -81,7 +85,7 @@ public class CalendarEventTools {
                 ? existing.reminderTime() == null ? null : existing.reminderTime().toLocalTime().toString()
                 : reminderTime;
 
-        CalendarEvent updated = eventService.updateEvent(id, toRequest(
+        CalendarEvent updated = eventService.updateEvent(userId, id, toRequest(
                 isBlank(title) ? existing.title() : title,
                 resolvedDate.toString(),
                 resolvedStartTime,
@@ -98,7 +102,7 @@ public class CalendarEventTools {
     public CalendarToolResult deleteCalendarEvent(
             @ToolParam(description = "要删除的日程 id") Long id
     ) {
-        eventService.deleteEvent(id);
+        eventService.deleteEvent(currentUserService.requireCurrentUserId(), id);
         return CalendarToolResult.success("日程删除成功", null);
     }
 
