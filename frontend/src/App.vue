@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Mic, Square } from 'lucide-vue-next'
+import { Mic, Send, Square } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 type CalendarEvent = {
@@ -38,6 +38,11 @@ type CalendarDay = {
 
 type VoiceStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error'
 
+type AgentChatResponse = {
+  content: string
+  aiEnabled: boolean
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8080'
 const SPEECH_WS_URL = buildSpeechWsUrl(API_BASE_URL)
 
@@ -70,6 +75,8 @@ const isVoiceFormOpen = ref(false)
 const voiceText = ref('')
 const voiceStatus = ref<VoiceStatus>('idle')
 const voiceError = ref('')
+const voiceAgentMessage = ref('')
+const voiceAgentSubmitting = ref(false)
 const editingEvent = ref<CalendarEvent | null>(null)
 const pendingDeleteId = ref<number | null>(null)
 let speechSocket: WebSocket | null = null
@@ -79,6 +86,7 @@ let mediaSourceNode: MediaStreamAudioSourceNode | null = null
 let audioWorkletNode: AudioWorkletNode | null = null
 let silenceGainNode: GainNode | null = null
 let finalVoiceText = ''
+let voiceConversationId = ''
 
 const form = reactive<EventForm>({
   title: '',
@@ -121,6 +129,10 @@ const canStartVoice = computed(() => {
 
 const canStopVoice = computed(() => {
   return voiceStatus.value === 'connecting' || voiceStatus.value === 'recording'
+})
+
+const canSubmitVoiceToAgent = computed(() => {
+  return Boolean(voiceText.value.trim()) && !voiceAgentSubmitting.value
 })
 
 const scheduleDates = computed(() => {
@@ -210,6 +222,8 @@ function openVoiceForm() {
   voiceText.value = ''
   finalVoiceText = ''
   voiceError.value = ''
+  voiceAgentMessage.value = ''
+  voiceConversationId = `voice-${Date.now()}`
   voiceStatus.value = 'idle'
   isVoiceFormOpen.value = true
 }
@@ -228,6 +242,7 @@ async function startVoiceRecognition() {
   voiceText.value = ''
   finalVoiceText = ''
   voiceError.value = ''
+  voiceAgentMessage.value = ''
   voiceStatus.value = 'connecting'
 
   try {
@@ -238,6 +253,48 @@ async function startVoiceRecognition() {
     voiceError.value = error instanceof Error ? error.message : '启动录音失败'
     stopAudioCapture()
     cleanupSpeechSocket()
+  }
+}
+
+async function submitVoiceToAgent() {
+  const message = voiceText.value.trim()
+
+  if (!message) {
+    voiceError.value = '请先输入或识别出语音内容'
+    return
+  }
+
+  if (canStopVoice.value) {
+    stopVoiceRecognition()
+  }
+
+  voiceError.value = ''
+  voiceAgentMessage.value = ''
+  voiceAgentSubmitting.value = true
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/agent/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        message,
+        conversationId: voiceConversationId,
+      }),
+    })
+
+    if (!response.ok) {
+      throw new Error(await getResponseMessage(response))
+    }
+
+    const data = (await response.json()) as AgentChatResponse
+    voiceAgentMessage.value = data.content
+    await loadEvents()
+  } catch (error) {
+    voiceError.value = error instanceof Error ? error.message : '发送给 Agent 失败'
+  } finally {
+    voiceAgentSubmitting.value = false
   }
 }
 
@@ -805,7 +862,7 @@ function buildSpeechWsUrl(apiBaseUrl: string) {
           <button class="icon-button" type="button" aria-label="关闭" @click="closeVoiceForm">×</button>
         </header>
 
-        <form class="event-form voice-form" @submit.prevent="closeVoiceForm">
+        <form class="event-form voice-form" @submit.prevent="submitVoiceToAgent">
           <div class="voice-control-bar field-full">
             <span class="voice-status" :class="voiceStatus">{{ voiceStatusText }}</span>
             <div class="voice-actions">
@@ -841,9 +898,17 @@ function buildSpeechWsUrl(apiBaseUrl: string) {
 
           <p v-if="voiceError" class="notice error field-full">{{ voiceError }}</p>
 
+          <div v-if="voiceAgentMessage" class="agent-response field-full">
+            <span>Agent 回复</span>
+            <p>{{ voiceAgentMessage }}</p>
+          </div>
+
           <footer class="form-actions field-full">
             <button class="today-button" type="button" @click="closeVoiceForm">取消</button>
-            <button class="primary-button" type="submit">确定</button>
+            <button class="primary-button voice-action-button" type="submit" :disabled="!canSubmitVoiceToAgent">
+              <Send :size="16" :stroke-width="2.4" aria-hidden="true" />
+              <span>{{ voiceAgentSubmitting ? '发送中...' : '发送给 Agent' }}</span>
+            </button>
           </footer>
         </form>
       </section>

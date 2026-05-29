@@ -19,7 +19,7 @@ public class CalendarEventTools {
         this.eventService = eventService;
     }
 
-    @Tool(description = "创建新的日程。date 必须是 yyyy-MM-dd，startTime/endTime/reminderTime 必须是 HH:mm。缺少标题、日期或开始时间时不要调用。")
+    @Tool(description = "创建新的日程。date 必须是 yyyy-MM-dd，startTime/endTime/reminderTime 必须是 HH:mm。只要用户表达了日程动作或内容，就可以把该动作或内容作为标题，例如“今天下午三点开会”的标题是“开会”。缺少日期或开始时间时不要调用。")
     public CalendarToolResult createCalendarEvent(
             @ToolParam(description = "日程标题，例如：项目评审") String title,
             @ToolParam(description = "日程日期，格式 yyyy-MM-dd，例如：2026-05-29") String date,
