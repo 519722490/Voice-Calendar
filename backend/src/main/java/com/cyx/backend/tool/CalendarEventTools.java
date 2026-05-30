@@ -31,7 +31,7 @@ public class CalendarEventTools {
             @ToolParam(description = "结束时间，格式 HH:mm，可选", required = false) String endTime,
             @ToolParam(description = "地点，可选", required = false) String location,
             @ToolParam(description = "备注，可选", required = false) String description,
-            @ToolParam(description = "标签，可选，例如：会议、学习、生活", required = false) String tag,
+            @ToolParam(description = "标签，必须从固定值中选择：会议、工作、学习、生活、运动、出行、提醒、其他；识别不出来用“其他”。", required = false) String tag,
             @ToolParam(description = "提醒时间，格式 HH:mm，可选", required = false) String reminderTime
     ) {
         CalendarEvent event = eventService.createEvent(currentUserService.requireCurrentUserId(), toRequest(
@@ -71,7 +71,7 @@ public class CalendarEventTools {
             @ToolParam(description = "新结束时间，格式 HH:mm，可选", required = false) String endTime,
             @ToolParam(description = "新地点，可选", required = false) String location,
             @ToolParam(description = "新备注，可选", required = false) String description,
-            @ToolParam(description = "新标签，可选", required = false) String tag,
+            @ToolParam(description = "新标签，可选，必须从固定值中选择：会议、工作、学习、生活、运动、出行、提醒、其他；识别不出来用“其他”。", required = false) String tag,
             @ToolParam(description = "新提醒时间，格式 HH:mm，可选", required = false) String reminderTime
     ) {
         Long userId = currentUserService.requireCurrentUserId();

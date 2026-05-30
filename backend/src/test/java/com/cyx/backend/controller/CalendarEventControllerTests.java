@@ -105,6 +105,24 @@ class CalendarEventControllerTests {
     }
 
     @Test
+    void shouldNormalizeUnknownTagToOther() throws Exception {
+        String token = TestAuthHelper.registerUser(mockMvc, objectMapper, "unknown_tag_user").token();
+
+        mockMvc.perform(post("/api/events")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "自定义标签测试",
+                                  "startTime": "2030-01-02T10:00:00",
+                                  "tag": "项目会议"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.tag").value("其他"));
+    }
+
+    @Test
     void shouldKeepEventsIsolatedBetweenUsers() throws Exception {
         String ownerToken = TestAuthHelper.registerUser(mockMvc, objectMapper, "owner_user").token();
         String otherToken = TestAuthHelper.registerUser(mockMvc, objectMapper, "other_user").token();

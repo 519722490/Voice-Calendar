@@ -3,6 +3,7 @@ package com.cyx.backend.service;
 import com.cyx.backend.dto.CalendarEvent;
 import com.cyx.backend.dto.EventRequest;
 import com.cyx.backend.entity.CalendarEventEntity;
+import com.cyx.backend.event.CalendarEventTag;
 import com.cyx.backend.exception.EventNotFoundException;
 import com.cyx.backend.repository.CalendarEventJpaRepository;
 import java.time.Instant;
@@ -50,7 +51,7 @@ public class CalendarEventService {
                 request.endTime(),
                 normalizeText(request.location()),
                 normalizeText(request.description()),
-                defaultTag(request.tag()),
+                normalizeTag(request.tag()),
                 request.reminderTime(),
                 now,
                 now
@@ -71,7 +72,7 @@ public class CalendarEventService {
                 request.endTime(),
                 normalizeText(request.location()),
                 normalizeText(request.description()),
-                defaultTag(request.tag()),
+                normalizeTag(request.tag()),
                 request.reminderTime(),
                 existing.getCreatedAt(),
                 Instant.now()
@@ -104,9 +105,8 @@ public class CalendarEventService {
         return value.trim();
     }
 
-    private String defaultTag(String tag) {
-        String normalized = normalizeText(tag);
-        return normalized == null ? "日程" : normalized;
+    private String normalizeTag(String tag) {
+        return CalendarEventTag.normalize(tag);
     }
 
     private CalendarEvent toResponse(CalendarEventEntity entity) {

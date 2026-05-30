@@ -1108,7 +1108,7 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
 
           <label class="field">
             <span>标签</span>
-            <input v-model="form.tag" type="text" placeholder="会议、学习、生活" />
+            <input v-model="form.tag" type="text" placeholder="会议、工作、学习、生活、运动、出行、提醒、其他" />
           </label>
 
           <label class="field">
