@@ -236,6 +236,11 @@ h3 {
   opacity: 0.68;
 }
 
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
 .notice {
   margin-bottom: 14px;
   padding: 11px 14px;
@@ -517,6 +522,100 @@ h3 {
 
 .voice-form {
   grid-template-columns: 1fr;
+}
+
+.settings-modal {
+  width: min(620px, 100%);
+}
+
+.settings-body {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.settings-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: #fbfcfd;
+}
+
+.settings-section p {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.voice-inline-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  z-index: 18;
+  display: flex;
+  width: min(720px, calc(100% - 28px));
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(38, 114, 111, 0.24);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 48px rgba(20, 28, 38, 0.18);
+}
+
+.voice-inline-banner.recording {
+  border-color: rgba(38, 114, 111, 0.34);
+  background: #f4fbfa;
+}
+
+.voice-inline-banner.error {
+  border-color: #f2b8b5;
+  background: #fff7f6;
+}
+
+.voice-inline-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.voice-inline-main p {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-result-backdrop {
+  z-index: 30;
+}
+
+.agent-result-modal {
+  width: min(520px, 100%);
+}
+
+.agent-result-body {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.agent-result-message {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
 }
 
 .voice-control-bar {
@@ -848,6 +947,21 @@ h3 {
 
   .agent-mode-switch {
     width: 100%;
+  }
+
+  .settings-section {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .voice-inline-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .voice-inline-main {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .voice-status {

@@ -98,7 +98,7 @@ public class CalendarEventTools {
         return CalendarToolResult.success("日程修改成功", updated);
     }
 
-    @Tool(description = "删除指定 id 的日程。只有在用户提供的标题、日期、时间等信息能唯一定位目标日程，或系统内部已有明确 id 时才调用；用户只说“刚刚的、最近的、上一个、它、那个”等模糊引用时不要调用。回复用户时不要展示 id。")
+    @Tool(description = "删除或取消指定 id 的日程。用户说删除、取消、撤销、删掉、移除、不去了、不参加、作废、不再、不用、不 + 日程内容 + 了都表示删除意图，例如“今天下午不背单词了”。只有在用户提供的标题、日期、时间等信息能唯一定位目标日程，或系统内部已有明确 id 时才调用；用户只说“刚刚的、最近的、上一个、它、那个”等模糊引用时不要调用。回复用户时不要展示 id。")
     public CalendarToolResult deleteCalendarEvent(
             @ToolParam(description = "要删除的日程 id") Long id
     ) {
