@@ -1,5 +1,7 @@
 package com.cyx.backend.controller;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -92,7 +94,10 @@ class AgentControllerTests {
                                 """.formatted(pendingAction.id())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.action").value("DELETE"));
+                .andExpect(jsonPath("$.action").value("DELETE"))
+                .andExpect(jsonPath("$.content").value(containsString("标题：待删除会议")))
+                .andExpect(jsonPath("$.content").value(containsString("时间：2030-03-04 15:00-16:00")))
+                .andExpect(jsonPath("$.content").value(not(containsString("#" + eventId))));
 
         mockMvc.perform(post("/api/agent/confirm")
                         .header("Authorization", "Bearer " + user.token())
