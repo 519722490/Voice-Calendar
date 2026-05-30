@@ -11,14 +11,17 @@ public record AgentChatResponse(
         boolean needsConfirmation,
         CalendarEvent event,
         List<CalendarEvent> candidates,
-        PendingAgentAction pendingAction
+        PendingAgentAction pendingAction,
+        boolean batch,
+        List<AgentActionResult> results
 ) {
     public AgentChatResponse {
         candidates = candidates == null ? List.of() : List.copyOf(candidates);
+        results = results == null ? List.of() : List.copyOf(results);
     }
 
     public AgentChatResponse(String content, boolean aiEnabled) {
-        this(content, aiEnabled, aiEnabled, "auto", "NONE", false, null, List.of(), null);
+        this(content, aiEnabled, aiEnabled, "auto", "NONE", false, null, List.of(), null, false, List.of());
     }
 
     public static AgentChatResponse disabled(String mode) {
@@ -31,7 +34,9 @@ public record AgentChatResponse(
                 false,
                 null,
                 List.of(),
-                null
+                null,
+                false,
+                List.of()
         );
     }
 
@@ -42,11 +47,11 @@ public record AgentChatResponse(
             CalendarEvent event,
             List<CalendarEvent> candidates
     ) {
-        return new AgentChatResponse(content, true, true, mode, action, false, event, candidates, null);
+        return new AgentChatResponse(content, true, true, mode, action, false, event, candidates, null, false, List.of());
     }
 
     public static AgentChatResponse failed(String content, String mode, String action, List<CalendarEvent> candidates) {
-        return new AgentChatResponse(content, true, false, mode, action, false, null, candidates, null);
+        return new AgentChatResponse(content, true, false, mode, action, false, null, candidates, null, false, List.of());
     }
 
     public static AgentChatResponse confirmation(
@@ -55,6 +60,32 @@ public record AgentChatResponse(
             List<CalendarEvent> candidates,
             PendingAgentAction pendingAction
     ) {
-        return new AgentChatResponse(content, true, false, "review", action, true, null, candidates, pendingAction);
+        return new AgentChatResponse(content, true, false, "review", action, true, null, candidates, pendingAction, false, List.of());
+    }
+
+    public static AgentChatResponse batch(String content, String mode, String action, boolean success, List<AgentActionResult> results) {
+        List<AgentActionResult> batchResults = results == null ? List.of() : List.copyOf(results);
+        List<CalendarEvent> candidates = batchResults.size() == 1 ? batchResults.getFirst().candidates() : List.of();
+        CalendarEvent event = batchResults.size() == 1 ? batchResults.getFirst().event() : null;
+        PendingAgentAction pendingAction = batchResults.stream()
+                .map(AgentActionResult::pendingAction)
+                .filter(actionItem -> actionItem != null)
+                .findFirst()
+                .orElse(null);
+        boolean needsConfirmation = pendingAction != null;
+
+        return new AgentChatResponse(
+                content,
+                true,
+                success,
+                mode,
+                action,
+                needsConfirmation,
+                event,
+                candidates,
+                pendingAction,
+                batchResults.size() > 1,
+                batchResults
+        );
     }
 }

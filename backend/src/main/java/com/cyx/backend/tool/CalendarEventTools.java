@@ -55,14 +55,14 @@ public class CalendarEventTools {
         return eventService.findEvents(currentUserService.requireCurrentUserId(), parsedDate);
     }
 
-    @Tool(description = "根据日程 id 查询单个日程详情。")
+    @Tool(description = "根据日程 id 查询单个日程详情。仅在系统内部已经有明确 id 时使用；不要要求用户提供 id，也不要在回复用户时展示 id。")
     public CalendarEvent getCalendarEvent(
             @ToolParam(description = "日程 id") Long id
     ) {
         return eventService.getEvent(currentUserService.requireCurrentUserId(), id);
     }
 
-    @Tool(description = "修改已有日程。只在用户明确要修改某个 id 对应的日程时调用；未传的字段会保留原值。date 必须是 yyyy-MM-dd，时间必须是 HH:mm。")
+    @Tool(description = "修改已有日程。只有在用户提供的标题、日期、时间等信息能唯一定位目标日程，或系统内部已有明确 id 时才调用；用户只说“刚刚的、最近的、上一个、它、那个”等模糊引用时不要调用。未传的字段会保留原值。date 必须是 yyyy-MM-dd，时间必须是 HH:mm。回复用户时不要展示 id。")
     public CalendarToolResult updateCalendarEvent(
             @ToolParam(description = "要修改的日程 id") Long id,
             @ToolParam(description = "新标题，可选", required = false) String title,
@@ -98,7 +98,7 @@ public class CalendarEventTools {
         return CalendarToolResult.success("日程修改成功", updated);
     }
 
-    @Tool(description = "删除指定 id 的日程。删除前必须确认用户已经明确要删除该日程。")
+    @Tool(description = "删除指定 id 的日程。只有在用户提供的标题、日期、时间等信息能唯一定位目标日程，或系统内部已有明确 id 时才调用；用户只说“刚刚的、最近的、上一个、它、那个”等模糊引用时不要调用。回复用户时不要展示 id。")
     public CalendarToolResult deleteCalendarEvent(
             @ToolParam(description = "要删除的日程 id") Long id
     ) {

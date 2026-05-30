@@ -2,16 +2,21 @@ package com.cyx.backend.service;
 
 import com.cyx.backend.dto.AgentChatRequest;
 import com.cyx.backend.dto.AgentChatResponse;
+import com.cyx.backend.dto.AgentActionResult;
 import com.cyx.backend.dto.CalendarAgentIntent;
+import com.cyx.backend.dto.CalendarAgentPlan;
 import com.cyx.backend.dto.CalendarEvent;
 import com.cyx.backend.dto.EventRequest;
 import com.cyx.backend.dto.PendingAgentAction;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import org.springframework.ai.chat.client.ChatClient;
@@ -29,6 +34,12 @@ public class AgentService {
     private static final String ACTION_UPDATE = "UPDATE";
     private static final String ACTION_DELETE = "DELETE";
     private static final String ACTION_NONE = "NONE";
+    private static final String ACTION_BATCH = "BATCH";
+    private static final int MAX_REVIEW_ACTIONS = 8;
+    private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
+    private static final String NO_CLEAR_INTENT_MESSAGE = "未识别到明确的日程管理信息，请说明要添加、查看、修改或删除的日程。";
+    private static final String UNCLEAR_TARGET_MESSAGE = "无法确定要操作的具体日程，请提供标题、日期或时间后重试。";
 
     private final ObjectProvider<ChatClient> autoChatClientProvider;
     private final ObjectProvider<ChatClient> reviewChatClientProvider;
@@ -81,7 +92,7 @@ public class AgentService {
             CalendarEvent existing = eventService.getEvent(userId, storedAction.eventId());
             eventService.deleteEvent(userId, storedAction.eventId());
             return AgentChatResponse.done(
-                    "已删除日程：" + formatEvent(existing),
+                    "已删除日程：\n" + formatEvent(existing),
                     MODE_REVIEW,
                     ACTION_DELETE,
                     null,
@@ -92,7 +103,7 @@ public class AgentService {
         if (ACTION_UPDATE.equals(normalizedAction)) {
             CalendarEvent updated = updateEvent(userId, storedAction);
             return AgentChatResponse.done(
-                    "已修改日程：" + formatEvent(updated),
+                    "已修改日程：\n" + formatEvent(updated),
                     MODE_REVIEW,
                     ACTION_UPDATE,
                     updated,
@@ -114,7 +125,14 @@ public class AgentService {
                     .user(request.message())
                     .call()
                     .content();
-            return AgentChatResponse.done(content, mode, ACTION_NONE, null, List.of());
+            String normalizedContent = blankToNull(content);
+            if (normalizedContent == null || NO_CLEAR_INTENT_MESSAGE.equals(normalizedContent)) {
+                return AgentChatResponse.failed(NO_CLEAR_INTENT_MESSAGE, mode, ACTION_NONE, List.of());
+            }
+            if (isForbiddenAutoModeReply(normalizedContent)) {
+                return AgentChatResponse.failed(UNCLEAR_TARGET_MESSAGE, mode, ACTION_NONE, List.of());
+            }
+            return AgentChatResponse.done(normalizedContent, mode, ACTION_NONE, null, List.of());
         } catch (Exception exception) {
             return AgentChatResponse.failed("AI 调用失败：" + exception.getMessage(), mode, ACTION_NONE, List.of());
         }
@@ -126,32 +144,37 @@ public class AgentService {
             return AgentChatResponse.disabled(mode);
         }
 
-        CalendarAgentIntent intent;
+        CalendarAgentPlan plan;
         try {
-            intent = parseIntent(chatClient, request.message());
+            plan = parsePlan(chatClient, request.message());
         } catch (Exception exception) {
             return AgentChatResponse.failed("意图解析失败：" + exception.getMessage(), mode, ACTION_NONE, List.of());
         }
 
         try {
-            return executeReviewedIntent(intent, mode);
+            return executeReviewedPlan(plan, mode);
         } catch (Exception exception) {
-            String action = intent == null ? ACTION_NONE : normalizeAction(intent.action());
-            return AgentChatResponse.failed("日程操作失败：" + exception.getMessage(), mode, action, List.of());
+            return AgentChatResponse.failed("日程操作失败：" + exception.getMessage(), mode, ACTION_NONE, List.of());
         }
     }
 
-    private CalendarAgentIntent parseIntent(ChatClient chatClient, String message) throws Exception {
+    private CalendarAgentPlan parsePlan(ChatClient chatClient, String message) throws Exception {
         ZonedDateTime now = ZonedDateTime.now(agentZoneId);
         String content = chatClient.prompt()
                 .user("""
-                        请把用户的语音文本解析成一个 JSON 对象。
+                        请把用户的语音文本解析成一个 JSON 计划对象。
+                        如果用户一次说了多条日程管理指令，必须拆分成 actions 数组中的多条 action，不要合并成一条。
 
                         当前日期时间：%s
                         当前日期：%s
                         时区：%s
 
-                        JSON 字段说明：
+                        顶层 JSON 字段：
+                        - summary：一句话总结本次计划。
+                        - confidence：0 到 1 的整体置信度。
+                        - actions：数组。每个元素是一条独立日程操作。
+
+                        单条 action 字段说明：
                         - action：只能是 CREATE、QUERY、UPDATE、DELETE、NONE。
                         - title/date/startTime/endTime/location/description/tag/reminderTime：用于创建或查询；修改/删除时 date 表示原日程所在日期；date 必须是 yyyy-MM-dd，时间必须是 HH:mm。
                         - tag 和 newTag 只能从固定值中选择：会议、工作、学习、生活、运动、出行、提醒、其他。识别不出来时必须填写“其他”。
@@ -169,31 +192,129 @@ public class AgentService {
                         4. 修改时，target 字段描述原日程，new 字段描述要改成的新内容。例如“把今天三点的会改到四点”：targetStartTime=15:00，newStartTime=16:00。
                         5. 删除时只提取定位条件，不要假装已经删除。
                         6. 完全没有日程管理含义时，action=NONE。
-                        7. 只输出 JSON 对象，不要输出其它任何内容。
+                        7. “然后、还有、再、另外、顺便、以及”通常表示多条指令。
+                        8. 如果一句话中出现多个明确时间点和多个日程内容，通常应拆成多条 CREATE。
+                        9. 如果某一条缺少必要字段，只让这一条保留缺失字段，不要影响其它条。
+                        10. 最多输出 %d 条 action；如果超过，保留最明确的前 %d 条。
+                        11. 必须只输出 JSON 对象，不要输出 Markdown、解释文字或代码块。
+
+                        输出示例：
+                        {
+                          "summary": "用户想创建两条日程",
+                          "confidence": 0.92,
+                          "actions": [
+                            {
+                              "action": "CREATE",
+                              "title": "开会",
+                              "date": "%s",
+                              "startTime": "15:00",
+                              "tag": "会议",
+                              "confidence": 0.95,
+                              "reason": "用户说今天下午三点开会"
+                            },
+                            {
+                              "action": "CREATE",
+                              "title": "复习英语",
+                              "date": "%s",
+                              "startTime": "09:00",
+                              "tag": "学习",
+                              "confidence": 0.93,
+                              "reason": "用户说明天上午九点复习英语"
+                            }
+                          ]
+                        }
 
                         用户语音文本：%s
-                        """.formatted(now.toLocalDateTime(), now.toLocalDate(), agentZoneId, message))
+                        """.formatted(
+                        now.toLocalDateTime(),
+                        now.toLocalDate(),
+                        agentZoneId,
+                        MAX_REVIEW_ACTIONS,
+                        MAX_REVIEW_ACTIONS,
+                        now.toLocalDate(),
+                        now.toLocalDate().plusDays(1),
+                        message
+                ))
                 .call()
                 .content();
-        return objectMapper.readValue(extractJsonObject(content), CalendarAgentIntent.class);
+        return readPlan(content);
     }
 
-    private AgentChatResponse executeReviewedIntent(CalendarAgentIntent intent, String mode) {
-        String action = normalizeAction(intent.action());
-        Long userId = currentUserService.requireCurrentUserId();
+    private CalendarAgentPlan readPlan(String content) throws Exception {
+        String json = extractJsonObject(content);
+        JsonNode root = objectMapper.readTree(json);
 
-        return switch (action) {
-            case ACTION_CREATE -> createEvent(userId, intent, mode);
-            case ACTION_QUERY -> queryEvents(userId, intent, mode);
-            case ACTION_UPDATE -> prepareUpdate(userId, intent, mode);
-            case ACTION_DELETE -> prepareDelete(userId, intent, mode);
-            default -> AgentChatResponse.failed(
-                    "未识别到明确的日程管理信息，请说明要添加、查看、修改或删除的日程。",
+        if (root.has("actions") && root.path("actions").isArray()) {
+            return objectMapper.readValue(json, CalendarAgentPlan.class);
+        }
+
+        CalendarAgentIntent singleIntent = objectMapper.readValue(json, CalendarAgentIntent.class);
+        return new CalendarAgentPlan(List.of(singleIntent), "单条日程指令", singleIntent.confidence());
+    }
+
+    private AgentChatResponse executeReviewedPlan(CalendarAgentPlan plan, String mode) {
+        List<CalendarAgentIntent> actions = plan.actions().stream()
+                .filter(action -> action != null)
+                .limit(MAX_REVIEW_ACTIONS)
+                .toList();
+
+        if (actions.isEmpty()) {
+            return AgentChatResponse.failed(
+                    NO_CLEAR_INTENT_MESSAGE,
                     mode,
                     ACTION_NONE,
                     List.of()
             );
-        };
+        }
+
+        Long userId = currentUserService.requireCurrentUserId();
+        List<AgentActionResult> results = new ArrayList<>();
+
+        for (int index = 0; index < actions.size(); index++) {
+            CalendarAgentIntent intent = actions.get(index);
+            results.add(executeReviewedAction(index + 1, intent, mode, userId));
+        }
+
+        return summarizeReviewedResults(mode, results);
+    }
+
+    private AgentActionResult executeReviewedAction(int index, CalendarAgentIntent intent, String mode, Long userId) {
+        String action = normalizeAction(intent.action());
+
+        try {
+            AgentChatResponse response = switch (action) {
+                case ACTION_CREATE -> createEvent(userId, intent, mode);
+                case ACTION_QUERY -> queryEvents(userId, intent, mode);
+                case ACTION_UPDATE -> prepareUpdate(userId, intent, mode);
+                case ACTION_DELETE -> prepareDelete(userId, intent, mode);
+                default -> AgentChatResponse.failed(
+                        NO_CLEAR_INTENT_MESSAGE,
+                        mode,
+                        ACTION_NONE,
+                        List.of()
+                );
+            };
+            return AgentActionResult.fromResponse(index, response);
+        } catch (Exception exception) {
+            return new AgentActionResult(
+                    index,
+                    action,
+                    false,
+                    false,
+                    "日程操作失败：" + exception.getMessage(),
+                    null,
+                    List.of(),
+                    null
+            );
+        }
+    }
+
+    private AgentChatResponse summarizeReviewedResults(String mode, List<AgentActionResult> results) {
+        String action = results.size() > 1 ? ACTION_BATCH : results.getFirst().action();
+        boolean success = results.stream().allMatch(result -> result.success() || result.needsConfirmation());
+        String content = formatReviewedSummary(results);
+
+        return AgentChatResponse.batch(content, mode, action, success, results);
     }
 
     private AgentChatResponse createEvent(Long userId, CalendarAgentIntent intent, String mode) {
@@ -210,7 +331,7 @@ public class AgentService {
                 blankToNull(intent.tag()),
                 toOptionalDateTime(intent.date(), intent.reminderTime())
         ));
-        return AgentChatResponse.done("已添加日程：" + formatEvent(event), mode, ACTION_CREATE, event, List.of(event));
+        return AgentChatResponse.done("已添加日程：\n" + formatEvent(event), mode, ACTION_CREATE, event, List.of(event));
     }
 
     private AgentChatResponse queryEvents(Long userId, CalendarAgentIntent intent, String mode) {
@@ -229,17 +350,20 @@ public class AgentService {
         if (!hasAnyUpdateField(intent)) {
             return AgentChatResponse.failed("没有识别到要修改成什么内容，请说出新的时间、标题或地点。", mode, ACTION_UPDATE, List.of());
         }
+        if (!hasAnyTargetLocator(intent)) {
+            return AgentChatResponse.failed(UNCLEAR_TARGET_MESSAGE, mode, ACTION_UPDATE, List.of());
+        }
 
         List<CalendarEvent> candidates = findCandidates(userId, intent);
         if (candidates.isEmpty()) {
             return AgentChatResponse.failed("没有找到符合条件的日程，无法修改。", mode, ACTION_UPDATE, List.of());
         }
         if (candidates.size() > 1) {
-            return AgentChatResponse.confirmation(
-                    "找到多个可能要修改的日程，请说得更具体一点：\n" + formatEvents(candidates),
+            return AgentChatResponse.failed(
+                    UNCLEAR_TARGET_MESSAGE,
+                    mode,
                     ACTION_UPDATE,
-                    candidates,
-                    null
+                    List.of()
             );
         }
 
@@ -259,7 +383,7 @@ public class AgentService {
                 blankToNull(intent.newReminderTime())
         ));
         return AgentChatResponse.confirmation(
-                "将修改这个日程，请确认：\n" + formatEvent(target) + "\n修改内容：" + summarizePendingUpdate(pendingAction) + "\n确认操作会自动过期，请尽快确认。",
+                "将修改这个日程，请确认：\n" + formatEvent(target) + "\n修改内容：\n" + summarizePendingUpdate(pendingAction) + "\n确认操作会自动过期，请尽快确认。",
                 ACTION_UPDATE,
                 candidates,
                 pendingAction
@@ -267,16 +391,20 @@ public class AgentService {
     }
 
     private AgentChatResponse prepareDelete(Long userId, CalendarAgentIntent intent, String mode) {
+        if (!hasAnyTargetLocator(intent)) {
+            return AgentChatResponse.failed(UNCLEAR_TARGET_MESSAGE, mode, ACTION_DELETE, List.of());
+        }
+
         List<CalendarEvent> candidates = findCandidates(userId, intent);
         if (candidates.isEmpty()) {
             return AgentChatResponse.failed("没有找到符合条件的日程，无法删除。", mode, ACTION_DELETE, List.of());
         }
         if (candidates.size() > 1) {
-            return AgentChatResponse.confirmation(
-                    "找到多个可能要删除的日程，请说得更具体一点：\n" + formatEvents(candidates),
+            return AgentChatResponse.failed(
+                    UNCLEAR_TARGET_MESSAGE,
+                    mode,
                     ACTION_DELETE,
-                    candidates,
-                    null
+                    List.of()
             );
         }
 
@@ -395,6 +523,14 @@ public class AgentService {
                 || !isBlank(intent.newReminderTime());
     }
 
+    private boolean hasAnyTargetLocator(CalendarAgentIntent intent) {
+        return intent.targetId() != null
+                || !isBlank(intent.date())
+                || !isBlank(intent.targetTitleKeyword())
+                || !isBlank(intent.targetStartTime())
+                || !isBlank(intent.startTime());
+    }
+
     private String summarizePendingUpdate(PendingAgentAction action) {
         StringBuilder builder = new StringBuilder();
         appendField(builder, "标题", action.title());
@@ -413,36 +549,114 @@ public class AgentService {
             return;
         }
         if (!builder.isEmpty()) {
-            builder.append("，");
+            builder.append("\n");
         }
-        builder.append(label).append("=").append(value.trim());
+        builder.append(label).append("：").append(value.trim());
     }
 
     private String formatEvents(List<CalendarEvent> events) {
-        return events.stream()
-                .limit(8)
-                .map(this::formatEvent)
-                .reduce((left, right) -> left + "\n" + right)
-                .orElse("");
-    }
-
-    private String formatEvent(CalendarEvent event) {
+        int limit = Math.min(events.size(), 8);
         StringBuilder builder = new StringBuilder();
-        builder.append("#").append(event.id()).append(" ");
-        builder.append(event.title()).append(" ");
-        builder.append(event.startTime().toLocalDate()).append(" ");
-        builder.append(event.startTime().toLocalTime());
-        if (event.endTime() != null) {
-            builder.append("-").append(event.endTime().toLocalTime());
+        for (int index = 0; index < limit; index++) {
+            if (!builder.isEmpty()) {
+                builder.append("\n");
+            }
+            builder.append(index + 1).append(". ").append(formatEventSummary(events.get(index)));
         }
-        if (!isBlank(event.location())) {
-            builder.append(" @").append(event.location());
+        if (events.size() > limit) {
+            builder.append("\n还有 ").append(events.size() - limit).append(" 个日程未展示。");
         }
         return builder.toString();
     }
 
+    private String formatEvent(CalendarEvent event) {
+        StringBuilder builder = new StringBuilder();
+        appendLine(builder, "标题", event.title());
+        appendLine(builder, "时间", formatDateTimeRange(event.startTime(), event.endTime()));
+        appendLine(builder, "地点", event.location());
+        appendLine(builder, "标签", event.tag());
+        appendLine(builder, "提醒", event.reminderTime() == null ? null : event.reminderTime().format(DATE_TIME_FORMATTER));
+        appendLine(builder, "备注", event.description());
+        return builder.toString();
+    }
+
+    private String formatEventSummary(CalendarEvent event) {
+        StringBuilder builder = new StringBuilder();
+        builder.append(event.title()).append(" | 时间：").append(formatDateTimeRange(event.startTime(), event.endTime()));
+        if (!isBlank(event.location())) {
+            builder.append(" | 地点：").append(event.location().trim());
+        }
+        if (!isBlank(event.tag())) {
+            builder.append(" | 标签：").append(event.tag().trim());
+        }
+        if (event.reminderTime() != null) {
+            builder.append(" | 提醒：").append(event.reminderTime().format(DATE_TIME_FORMATTER));
+        }
+        return builder.toString();
+    }
+
+    private String formatDateTimeRange(LocalDateTime startTime, LocalDateTime endTime) {
+        if (endTime == null) {
+            return startTime.format(DATE_TIME_FORMATTER);
+        }
+        if (startTime.toLocalDate().equals(endTime.toLocalDate())) {
+            return startTime.format(DATE_TIME_FORMATTER) + "-" + endTime.format(TIME_FORMATTER);
+        }
+        return startTime.format(DATE_TIME_FORMATTER) + " 至 " + endTime.format(DATE_TIME_FORMATTER);
+    }
+
+    private void appendLine(StringBuilder builder, String label, String value) {
+        if (isBlank(value)) {
+            return;
+        }
+        if (!builder.isEmpty()) {
+            builder.append("\n");
+        }
+        builder.append(label).append("：").append(value.trim());
+    }
+
+    private String formatReviewedSummary(List<AgentActionResult> results) {
+        if (results.isEmpty()) {
+            return NO_CLEAR_INTENT_MESSAGE;
+        }
+        if (results.size() == 1) {
+            return results.getFirst().message();
+        }
+
+        long succeededCount = results.stream()
+                .filter(result -> result.success() && !result.needsConfirmation())
+                .count();
+        long pendingCount = results.stream()
+                .filter(AgentActionResult::needsConfirmation)
+                .count();
+        long failedCount = results.size() - succeededCount - pendingCount;
+
+        return "已处理 " + results.size() + " 条日程指令：成功 " + succeededCount
+                + " 条，待确认 " + pendingCount + " 条，失败 " + failedCount + " 条。";
+    }
+
     private String normalizeMode(String mode) {
         return MODE_AUTO.equalsIgnoreCase(blankToNull(mode)) ? MODE_AUTO : MODE_REVIEW;
+    }
+
+    private boolean isForbiddenAutoModeReply(String content) {
+        String normalized = content.toLowerCase(Locale.ROOT);
+        return content.contains("是否确认")
+                || content.contains("请确认")
+                || content.contains("我看到多个")
+                || content.contains("多个日程")
+                || content.contains("最可能")
+                || content.contains("最近创建")
+                || content.contains("根据最近")
+                || content.contains("刚刚的日程")
+                || content.contains("候选")
+                || content.contains("createdAt")
+                || content.contains("updatedAt")
+                || normalized.contains("createdat")
+                || normalized.contains("updatedat")
+                || normalized.contains("id=")
+                || normalized.contains("id:")
+                || content.contains("id：");
     }
 
     private String normalizeAction(String action) {

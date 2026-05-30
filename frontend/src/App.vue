@@ -65,6 +65,19 @@ type AgentChatResponse = {
   event: CalendarEvent | null
   candidates: CalendarEvent[]
   pendingAction: PendingAgentAction | null
+  batch?: boolean
+  results?: AgentActionResult[]
+}
+
+type AgentActionResult = {
+  index: number
+  action: string
+  success: boolean
+  needsConfirmation: boolean
+  message: string
+  event: CalendarEvent | null
+  candidates: CalendarEvent[]
+  pendingAction: PendingAgentAction | null
 }
 
 type UserProfile = {
@@ -126,6 +139,7 @@ const voiceText = ref('')
 const voiceStatus = ref<VoiceStatus>('idle')
 const voiceError = ref('')
 const voiceAgentMessage = ref('')
+const voiceAgentResults = ref<AgentActionResult[]>([])
 const voiceAgentSubmitting = ref(false)
 const voiceAgentMode = ref<AgentMode>('review')
 const speechSubmitMode = ref<SpeechSubmitMode>('manual')
@@ -418,6 +432,7 @@ function openVoiceForm() {
   finalVoiceText = ''
   voiceError.value = ''
   voiceAgentMessage.value = ''
+  voiceAgentResults.value = []
   pendingAgentAction.value = null
   resetVoiceAutoSubmitState()
   voiceConversationId = `voice-${Date.now()}`
@@ -441,6 +456,7 @@ async function startVoiceRecognition() {
   finalVoiceText = ''
   voiceError.value = ''
   voiceAgentMessage.value = ''
+  voiceAgentResults.value = []
   pendingAgentAction.value = null
   resetVoiceAutoSubmitState()
   voiceStatus.value = 'connecting'
@@ -470,6 +486,7 @@ async function submitVoiceToAgent() {
 
   voiceError.value = ''
   voiceAgentMessage.value = ''
+  voiceAgentResults.value = []
   pendingAgentAction.value = null
   voiceAgentSubmitting.value = true
 
@@ -492,7 +509,8 @@ async function submitVoiceToAgent() {
 
     const data = (await response.json()) as AgentChatResponse
     voiceAgentMessage.value = data.content
-    pendingAgentAction.value = data.needsConfirmation ? data.pendingAction : null
+    voiceAgentResults.value = data.results ?? []
+    pendingAgentAction.value = findFirstPendingAction(data)
     await loadEvents()
   } catch (error) {
     voiceError.value = error instanceof Error ? error.message : '发送给 Agent 失败'
@@ -501,8 +519,8 @@ async function submitVoiceToAgent() {
   }
 }
 
-async function confirmPendingAgentAction() {
-  if (!pendingAgentAction.value || voiceAgentSubmitting.value) {
+async function confirmPendingAgentAction(action: PendingAgentAction | null = pendingAgentAction.value) {
+  if (!action || voiceAgentSubmitting.value) {
     return
   }
 
@@ -515,7 +533,7 @@ async function confirmPendingAgentAction() {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ id: pendingAgentAction.value.id }),
+      body: JSON.stringify({ id: action.id }),
     })
 
     if (!response.ok) {
@@ -524,13 +542,46 @@ async function confirmPendingAgentAction() {
 
     const data = (await response.json()) as AgentChatResponse
     voiceAgentMessage.value = data.content
-    pendingAgentAction.value = data.needsConfirmation ? data.pendingAction : null
+    updateConfirmedAgentResult(action.id, data)
     await loadEvents()
   } catch (error) {
     voiceError.value = error instanceof Error ? error.message : '确认执行失败'
   } finally {
     voiceAgentSubmitting.value = false
   }
+}
+
+function findFirstPendingAction(response: AgentChatResponse) {
+  return (
+    response.results?.find((result) => result.pendingAction)?.pendingAction ??
+    (response.needsConfirmation ? response.pendingAction : null)
+  )
+}
+
+function updateConfirmedAgentResult(actionId: string, response: AgentChatResponse) {
+  if (!voiceAgentResults.value.length) {
+    voiceAgentResults.value = response.results ?? []
+    pendingAgentAction.value = findFirstPendingAction(response)
+    return
+  }
+
+  voiceAgentResults.value = voiceAgentResults.value.map((result) => {
+    if (result.pendingAction?.id !== actionId) {
+      return result
+    }
+
+    return {
+      ...result,
+      success: response.success,
+      needsConfirmation: response.needsConfirmation,
+      message: response.content,
+      event: response.event,
+      candidates: response.candidates,
+      pendingAction: response.needsConfirmation ? response.pendingAction : null,
+    }
+  })
+
+  pendingAgentAction.value = voiceAgentResults.value.find((result) => result.pendingAction)?.pendingAction ?? null
 }
 
 function stopVoiceRecognition() {
@@ -1313,15 +1364,41 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
 
           <p v-if="voiceError" class="notice error field-full">{{ voiceError }}</p>
 
-          <div v-if="voiceAgentMessage" class="agent-response field-full">
+          <div v-if="voiceAgentMessage || voiceAgentResults.length" class="agent-response field-full">
             <span>Agent 回复</span>
-            <p>{{ voiceAgentMessage }}</p>
+            <p v-if="voiceAgentMessage && !voiceAgentResults.length">{{ voiceAgentMessage }}</p>
+            <ol v-if="voiceAgentResults.length" class="agent-result-list">
+              <li
+                v-for="result in voiceAgentResults"
+                :key="result.index"
+                class="agent-result-item"
+                :class="{
+                  failed: !result.success && !result.needsConfirmation,
+                  pending: result.needsConfirmation,
+                }"
+              >
+                <div class="agent-result-meta">
+                  <strong>第 {{ result.index }} 条</strong>
+                  <span>{{ result.action }}</span>
+                </div>
+                <p>{{ result.message }}</p>
+                <button
+                  v-if="result.pendingAction"
+                  class="primary-button voice-confirm-button"
+                  type="button"
+                  :disabled="voiceAgentSubmitting"
+                  @click="confirmPendingAgentAction(result.pendingAction)"
+                >
+                  确认执行
+                </button>
+              </li>
+            </ol>
             <button
-              v-if="pendingAgentAction"
+              v-if="pendingAgentAction && !voiceAgentResults.length"
               class="primary-button voice-confirm-button"
               type="button"
               :disabled="voiceAgentSubmitting"
-              @click="confirmPendingAgentAction"
+              @click="confirmPendingAgentAction()"
             >
               确认执行
             </button>
