@@ -24,6 +24,8 @@ public class SpeechRecognitionController {
                 properties.getEndpoint(),
                 properties.getSampleRate(),
                 properties.getFormat(),
+                properties.getMaxSentenceSilence(),
+                properties.isSemanticPunctuationEnabled(),
                 properties.isApiKeyConfigured()
         );
     }

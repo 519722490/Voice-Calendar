@@ -14,6 +14,8 @@ public class SpeechRecognitionProperties {
     private String endpoint = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
     private int sampleRate = 16000;
     private String format = "pcm";
+    private int maxSentenceSilence = 1300;
+    private boolean semanticPunctuationEnabled;
 
     public boolean isEnabled() {
         return enabled;
@@ -69,6 +71,22 @@ public class SpeechRecognitionProperties {
 
     public void setFormat(String format) {
         this.format = format;
+    }
+
+    public int getMaxSentenceSilence() {
+        return maxSentenceSilence;
+    }
+
+    public void setMaxSentenceSilence(int maxSentenceSilence) {
+        this.maxSentenceSilence = maxSentenceSilence;
+    }
+
+    public boolean isSemanticPunctuationEnabled() {
+        return semanticPunctuationEnabled;
+    }
+
+    public void setSemanticPunctuationEnabled(boolean semanticPunctuationEnabled) {
+        this.semanticPunctuationEnabled = semanticPunctuationEnabled;
     }
 
     public boolean isApiKeyConfigured() {

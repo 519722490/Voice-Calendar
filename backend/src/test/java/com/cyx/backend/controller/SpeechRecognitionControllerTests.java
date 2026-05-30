@@ -25,6 +25,8 @@ class SpeechRecognitionControllerTests {
                 .andExpect(jsonPath("$.endpoint").value("wss://dashscope.aliyuncs.com/api-ws/v1/inference"))
                 .andExpect(jsonPath("$.sampleRate").value(16000))
                 .andExpect(jsonPath("$.format").value("pcm"))
+                .andExpect(jsonPath("$.maxSentenceSilence").value(1300))
+                .andExpect(jsonPath("$.semanticPunctuationEnabled").value(false))
                 .andExpect(jsonPath("$.apiKeyConfigured").isBoolean());
     }
 }
