@@ -1,7 +1,9 @@
 package com.cyx.backend.controller;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -109,5 +111,91 @@ class AgentControllerTests {
                                 """.formatted(pendingAction.id())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
+    void shouldConfirmPendingCreateAction() throws Exception {
+        TestAuthHelper.TestUser user = TestAuthHelper.registerUser(mockMvc, objectMapper, "ag_create");
+        Long userId = userRepository.findByUsername(user.username()).orElseThrow().getId();
+        PendingAgentAction pendingAction = confirmationStore.save(userId, new PendingAgentAction(
+                null,
+                null,
+                "CREATE",
+                null,
+                "背单词",
+                "2030-04-05",
+                "15:00",
+                null,
+                null,
+                null,
+                "学习",
+                null
+        ));
+
+        mockMvc.perform(post("/api/agent/confirm")
+                        .header("Authorization", "Bearer " + user.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "id": "%s"
+                                }
+                                """.formatted(pendingAction.id())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.action").value("CREATE"))
+                .andExpect(jsonPath("$.content").value(containsString("标题：背单词")))
+                .andExpect(jsonPath("$.content").value(containsString("时间：2030-04-05 15:00")));
+
+        mockMvc.perform(get("/api/events")
+                        .header("Authorization", "Bearer " + user.token())
+                        .param("date", "2030-04-05"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].title").value("背单词"));
+    }
+
+    @Test
+    void shouldConfirmPendingQueryAction() throws Exception {
+        TestAuthHelper.TestUser user = TestAuthHelper.registerUser(mockMvc, objectMapper, "ag_query");
+        mockMvc.perform(post("/api/events")
+                        .header("Authorization", "Bearer " + user.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "查询测试日程",
+                                  "startTime": "2030-04-06T09:00:00"
+                                }
+                                """))
+                .andExpect(status().isCreated());
+
+        Long userId = userRepository.findByUsername(user.username()).orElseThrow().getId();
+        PendingAgentAction pendingAction = confirmationStore.save(userId, new PendingAgentAction(
+                null,
+                null,
+                "QUERY",
+                null,
+                null,
+                "2030-04-06",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+
+        mockMvc.perform(post("/api/agent/confirm")
+                        .header("Authorization", "Bearer " + user.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "id": "%s"
+                                }
+                                """.formatted(pendingAction.id())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.action").value("QUERY"))
+                .andExpect(jsonPath("$.content").value(containsString("查询测试日程")))
+                .andExpect(jsonPath("$.candidates", hasSize(1)));
     }
 }

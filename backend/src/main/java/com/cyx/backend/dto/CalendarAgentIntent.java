@@ -16,6 +16,8 @@ public record CalendarAgentIntent(
         Long targetId,
         String targetTitleKeyword,
         String targetStartTime,
+        String targetStartTimeFrom,
+        String targetStartTimeTo,
         String newTitle,
         String newDate,
         String newStartTime,

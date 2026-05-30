@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LogOut, Mic, Send, Square } from 'lucide-vue-next'
+import { LogOut, Mic, Send, Settings, Square } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 type CalendarEvent = {
@@ -135,6 +135,9 @@ const authSubmitting = ref(false)
 const authError = ref('')
 const isFormOpen = ref(false)
 const isVoiceFormOpen = ref(false)
+const isSettingsOpen = ref(false)
+const isVoiceBannerOpen = ref(false)
+const isAgentResultOpen = ref(false)
 const voiceText = ref('')
 const voiceStatus = ref<VoiceStatus>('idle')
 const voiceError = ref('')
@@ -223,6 +226,26 @@ const canSubmitVoiceToAgent = computed(() => {
 
 const canChangeSpeechSubmitMode = computed(() => {
   return voiceStatus.value === 'idle' || voiceStatus.value === 'error'
+})
+
+const canUseVoiceEntry = computed(() => {
+  return !voiceAgentSubmitting.value && !voiceAutoSubmitting.value && !['connecting', 'recording', 'stopping'].includes(voiceStatus.value)
+})
+
+const hasAgentPendingAction = computed(() => {
+  return Boolean(pendingAgentAction.value || voiceAgentResults.value.some((result) => result.pendingAction))
+})
+
+const agentResultTitle = computed(() => {
+  if (hasAgentPendingAction.value) {
+    return '需要确认'
+  }
+
+  if (voiceAgentResults.value.some((result) => !result.success)) {
+    return '操作未完成'
+  }
+
+  return '操作完成'
 })
 
 const scheduleDates = computed(() => {
@@ -365,6 +388,9 @@ function clearAuth() {
   localStorage.removeItem(TOKEN_STORAGE_KEY)
   closeForm()
   closeVoiceForm()
+  closeSettings()
+  closeVoiceBanner()
+  closeAgentResult()
 }
 
 async function authorizedFetch(input: string, init: RequestInit = {}) {
@@ -427,16 +453,34 @@ function backToToday() {
   visibleMonth.value = new Date(today.getFullYear(), today.getMonth(), 1)
 }
 
-function openVoiceForm() {
+function resetVoiceInteraction() {
   voiceText.value = ''
   finalVoiceText = ''
   voiceError.value = ''
   voiceAgentMessage.value = ''
   voiceAgentResults.value = []
   pendingAgentAction.value = null
+  isAgentResultOpen.value = false
   resetVoiceAutoSubmitState()
   voiceConversationId = `voice-${Date.now()}`
   voiceStatus.value = 'idle'
+}
+
+function handleVoiceEntry() {
+  if (!canUseVoiceEntry.value) {
+    return
+  }
+
+  if (speechSubmitMode.value === 'auto') {
+    startInlineVoiceRecognition()
+    return
+  }
+
+  openVoiceForm()
+}
+
+function openVoiceForm() {
+  resetVoiceInteraction()
   isVoiceFormOpen.value = true
 }
 
@@ -445,6 +489,32 @@ function closeVoiceForm() {
   cleanupSpeechSocket()
   stopAudioCapture()
   isVoiceFormOpen.value = false
+}
+
+function startInlineVoiceRecognition() {
+  resetVoiceInteraction()
+  isVoiceFormOpen.value = false
+  isVoiceBannerOpen.value = true
+  void startVoiceRecognition()
+}
+
+function closeVoiceBanner() {
+  resetVoiceAutoSubmitState()
+  cleanupSpeechSocket()
+  stopAudioCapture()
+  isVoiceBannerOpen.value = false
+
+  if (voiceStatus.value !== 'error') {
+    voiceStatus.value = 'idle'
+  }
+}
+
+function openSettings() {
+  isSettingsOpen.value = true
+}
+
+function closeSettings() {
+  isSettingsOpen.value = false
 }
 
 async function startVoiceRecognition() {
@@ -459,6 +529,7 @@ async function startVoiceRecognition() {
   voiceAgentResults.value = []
   pendingAgentAction.value = null
   resetVoiceAutoSubmitState()
+  voiceConversationId ||= `voice-${Date.now()}`
   voiceStatus.value = 'connecting'
 
   try {
@@ -511,6 +582,9 @@ async function submitVoiceToAgent() {
     voiceAgentMessage.value = data.content
     voiceAgentResults.value = data.results ?? []
     pendingAgentAction.value = findFirstPendingAction(data)
+    showAgentResult()
+    isVoiceFormOpen.value = false
+    isVoiceBannerOpen.value = false
     await loadEvents()
   } catch (error) {
     voiceError.value = error instanceof Error ? error.message : '发送给 Agent 失败'
@@ -543,6 +617,7 @@ async function confirmPendingAgentAction(action: PendingAgentAction | null = pen
     const data = (await response.json()) as AgentChatResponse
     voiceAgentMessage.value = data.content
     updateConfirmedAgentResult(action.id, data)
+    showAgentResult()
     await loadEvents()
   } catch (error) {
     voiceError.value = error instanceof Error ? error.message : '确认执行失败'
@@ -582,6 +657,17 @@ function updateConfirmedAgentResult(actionId: string, response: AgentChatRespons
   })
 
   pendingAgentAction.value = voiceAgentResults.value.find((result) => result.pendingAction)?.pendingAction ?? null
+}
+
+function showAgentResult() {
+  isAgentResultOpen.value = true
+}
+
+function closeAgentResult() {
+  isAgentResultOpen.value = false
+  voiceAgentMessage.value = ''
+  voiceAgentResults.value = []
+  pendingAgentAction.value = null
 }
 
 function stopVoiceRecognition() {
@@ -1119,9 +1205,19 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
           type="button"
           title="语音输入"
           aria-label="语音输入"
-          @click="openVoiceForm"
+          :disabled="!canUseVoiceEntry"
+          @click="handleVoiceEntry"
         >
           <Mic :size="18" :stroke-width="2.4" aria-hidden="true" />
+        </button>
+        <button
+          class="icon-button"
+          type="button"
+          title="语音与 Agent 设置"
+          aria-label="语音与 Agent 设置"
+          @click="openSettings"
+        >
+          <Settings :size="18" :stroke-width="2.4" aria-hidden="true" />
         </button>
         <button class="today-button" type="button" @click="backToToday">今天</button>
         <button class="primary-button" type="button" @click="openCreateForm">添加日程</button>
@@ -1129,6 +1225,24 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
     </header>
 
     <p v-if="errorMessage" class="notice error">{{ errorMessage }}</p>
+
+    <div v-if="isVoiceBannerOpen" class="voice-inline-banner" :class="voiceStatus">
+      <div class="voice-inline-main">
+        <span class="voice-status" :class="voiceStatus">{{ voiceStatusText }}</span>
+        <p>{{ voiceError || voiceText || '正在聆听语音内容...' }}</p>
+      </div>
+      <button
+        v-if="canStopVoice"
+        class="today-button voice-action-button"
+        type="button"
+        :disabled="voiceAutoSubmitting"
+        @click="stopVoiceRecognition"
+      >
+        <Square :size="15" :stroke-width="2.4" aria-hidden="true" />
+        <span>停止</span>
+      </button>
+      <button v-else class="icon-button" type="button" aria-label="关闭语音条幅" @click="closeVoiceBanner">×</button>
+    </div>
 
     <section class="calendar-panel" aria-label="月份日历">
       <div class="calendar-toolbar">
@@ -1308,8 +1422,45 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
             </div>
           </div>
 
-          <div class="voice-mode-row field-full">
-            <span class="voice-mode-label">语音提交</span>
+          <label class="field field-full">
+            <span>识别文本</span>
+            <textarea
+              v-model="voiceText"
+              rows="7"
+              :disabled="voiceAgentSubmitting || voiceAutoSubmitting"
+              placeholder="例如：今天下午三点开项目会"
+            ></textarea>
+          </label>
+
+          <p v-if="voiceError" class="notice error field-full">{{ voiceError }}</p>
+
+          <footer class="form-actions field-full">
+            <button class="today-button" type="button" @click="closeVoiceForm">取消</button>
+            <button class="primary-button voice-action-button" type="submit" :disabled="!canSubmitVoiceToAgent">
+              <Send :size="16" :stroke-width="2.4" aria-hidden="true" />
+              <span>{{ voiceAutoSubmitting ? '自动发送中...' : voiceAgentSubmitting ? '发送中...' : '发送给 Agent' }}</span>
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
+
+    <div v-if="isSettingsOpen" class="modal-backdrop" @click.self="closeSettings">
+      <section class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">Settings</p>
+            <h2 id="settings-title">语音与 Agent 设置</h2>
+          </div>
+          <button class="icon-button" type="button" aria-label="关闭" @click="closeSettings">×</button>
+        </header>
+
+        <div class="settings-body">
+          <section class="settings-section" aria-label="语音提交模式">
+            <div>
+              <h3>语音提交</h3>
+              <p>控制识别文本什么时候发送给 Agent。</p>
+            </div>
             <div class="agent-mode-switch" role="group" aria-label="语音提交模式">
               <button
                 type="button"
@@ -1328,10 +1479,13 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
                 静音自动提交
               </button>
             </div>
-          </div>
+          </section>
 
-          <div class="voice-mode-row field-full">
-            <span class="voice-mode-label">Agent 执行</span>
+          <section class="settings-section" aria-label="Agent 执行模式">
+            <div>
+              <h3>Agent 执行</h3>
+              <p>控制 Agent 收到文本后的执行方式。</p>
+            </div>
             <div class="agent-mode-switch" role="group" aria-label="Agent 执行模式">
               <button
                 type="button"
@@ -1350,68 +1504,59 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
                 自动模式
               </button>
             </div>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="isAgentResultOpen" class="modal-backdrop agent-result-backdrop" @click.self="!hasAgentPendingAction && closeAgentResult()">
+      <section class="modal agent-result-modal" role="dialog" aria-modal="true" aria-labelledby="agent-result-title">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">Agent Result</p>
+            <h2 id="agent-result-title">{{ agentResultTitle }}</h2>
           </div>
+          <button class="icon-button" type="button" aria-label="关闭" @click="closeAgentResult">×</button>
+        </header>
 
-          <label class="field field-full">
-            <span>识别文本</span>
-            <textarea
-              v-model="voiceText"
-              rows="7"
-              :disabled="voiceAgentSubmitting || voiceAutoSubmitting"
-              placeholder="例如：今天下午三点开项目会"
-            ></textarea>
-          </label>
-
-          <p v-if="voiceError" class="notice error field-full">{{ voiceError }}</p>
-
-          <div v-if="voiceAgentMessage || voiceAgentResults.length" class="agent-response field-full">
-            <span>Agent 回复</span>
-            <p v-if="voiceAgentMessage && !voiceAgentResults.length">{{ voiceAgentMessage }}</p>
-            <ol v-if="voiceAgentResults.length" class="agent-result-list">
-              <li
-                v-for="result in voiceAgentResults"
-                :key="result.index"
-                class="agent-result-item"
-                :class="{
-                  failed: !result.success && !result.needsConfirmation,
-                  pending: result.needsConfirmation,
-                }"
-              >
-                <div class="agent-result-meta">
-                  <strong>第 {{ result.index }} 条</strong>
-                  <span>{{ result.action }}</span>
-                </div>
-                <p>{{ result.message }}</p>
-                <button
-                  v-if="result.pendingAction"
-                  class="primary-button voice-confirm-button"
-                  type="button"
-                  :disabled="voiceAgentSubmitting"
-                  @click="confirmPendingAgentAction(result.pendingAction)"
-                >
-                  确认执行
-                </button>
-              </li>
-            </ol>
-            <button
-              v-if="pendingAgentAction && !voiceAgentResults.length"
-              class="primary-button voice-confirm-button"
-              type="button"
-              :disabled="voiceAgentSubmitting"
-              @click="confirmPendingAgentAction()"
+        <div class="agent-result-body">
+          <p v-if="voiceAgentMessage && !voiceAgentResults.length" class="agent-result-message">{{ voiceAgentMessage }}</p>
+          <ol v-if="voiceAgentResults.length" class="agent-result-list">
+            <li
+              v-for="result in voiceAgentResults"
+              :key="result.index"
+              class="agent-result-item"
+              :class="{
+                failed: !result.success && !result.needsConfirmation,
+                pending: result.needsConfirmation,
+              }"
             >
-              确认执行
-            </button>
-          </div>
-
-          <footer class="form-actions field-full">
-            <button class="today-button" type="button" @click="closeVoiceForm">取消</button>
-            <button class="primary-button voice-action-button" type="submit" :disabled="!canSubmitVoiceToAgent">
-              <Send :size="16" :stroke-width="2.4" aria-hidden="true" />
-              <span>{{ voiceAutoSubmitting ? '自动发送中...' : voiceAgentSubmitting ? '发送中...' : '发送给 Agent' }}</span>
-            </button>
-          </footer>
-        </form>
+              <div class="agent-result-meta">
+                <strong>第 {{ result.index }} 条</strong>
+                <span>{{ result.action }}</span>
+              </div>
+              <p>{{ result.message }}</p>
+              <button
+                v-if="result.pendingAction"
+                class="primary-button voice-confirm-button"
+                type="button"
+                :disabled="voiceAgentSubmitting"
+                @click="confirmPendingAgentAction(result.pendingAction)"
+              >
+                确认执行
+              </button>
+            </li>
+          </ol>
+          <button
+            v-if="pendingAgentAction && !voiceAgentResults.length"
+            class="primary-button voice-confirm-button"
+            type="button"
+            :disabled="voiceAgentSubmitting"
+            @click="confirmPendingAgentAction()"
+          >
+            确认执行
+          </button>
+        </div>
       </section>
     </div>
   </main>

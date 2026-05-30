@@ -38,6 +38,7 @@ public class AgentService {
     private static final int MAX_REVIEW_ACTIONS = 8;
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
+    private static final List<String> MEETING_KEYWORDS = List.of("会议", "开会", "例会", "讨论", "评审", "汇报", "碰头", "沟通");
     private static final String NO_CLEAR_INTENT_MESSAGE = "未识别到明确的日程管理信息，请说明要添加、查看、修改或删除的日程。";
     private static final String UNCLEAR_TARGET_MESSAGE = "无法确定要操作的具体日程，请提供标题、日期或时间后重试。";
 
@@ -49,6 +50,8 @@ public class AgentService {
     private final ObjectMapper objectMapper;
     private final boolean aiEnabled;
     private final ZoneId agentZoneId;
+    private final double reviewConfidenceThreshold;
+    private final double autoConfidenceThreshold;
 
     public AgentService(
             @Qualifier("voiceCalendarAutoChatClient") ObjectProvider<ChatClient> autoChatClientProvider,
@@ -58,7 +61,9 @@ public class AgentService {
             AgentConfirmationStore confirmationStore,
             ObjectMapper objectMapper,
             @Value("${voice-calendar.ai.enabled:false}") boolean aiEnabled,
-            @Value("${voice-calendar.agent.time-zone:Asia/Shanghai}") String agentTimeZone
+            @Value("${voice-calendar.agent.time-zone:Asia/Shanghai}") String agentTimeZone,
+            @Value("${voice-calendar.agent.review-confidence-threshold:0.45}") double reviewConfidenceThreshold,
+            @Value("${voice-calendar.agent.auto-confidence-threshold:0.8}") double autoConfidenceThreshold
     ) {
         this.autoChatClientProvider = autoChatClientProvider;
         this.reviewChatClientProvider = reviewChatClientProvider;
@@ -68,6 +73,8 @@ public class AgentService {
         this.objectMapper = objectMapper;
         this.aiEnabled = aiEnabled;
         this.agentZoneId = ZoneId.of(agentTimeZone);
+        this.reviewConfidenceThreshold = reviewConfidenceThreshold;
+        this.autoConfidenceThreshold = autoConfidenceThreshold;
     }
 
     public AgentChatResponse chat(AgentChatRequest request) {
@@ -88,6 +95,21 @@ public class AgentService {
         }
 
         String normalizedAction = normalizeAction(storedAction.action());
+        if (ACTION_CREATE.equals(normalizedAction)) {
+            CalendarEvent event = createEvent(userId, storedAction);
+            return AgentChatResponse.done(
+                    "已添加日程：\n" + formatEvent(event),
+                    MODE_REVIEW,
+                    ACTION_CREATE,
+                    event,
+                    List.of(event)
+            );
+        }
+
+        if (ACTION_QUERY.equals(normalizedAction)) {
+            return queryEvents(userId, storedAction.date(), MODE_REVIEW);
+        }
+
         if (ACTION_DELETE.equals(normalizedAction)) {
             CalendarEvent existing = eventService.getEvent(userId, storedAction.eventId());
             eventService.deleteEvent(userId, storedAction.eventId());
@@ -116,11 +138,18 @@ public class AgentService {
 
     private AgentChatResponse chatWithAutoMode(AgentChatRequest request, String mode) {
         ChatClient chatClient = autoChatClientProvider.getIfAvailable();
-        if (!aiEnabled || chatClient == null) {
+        ChatClient reviewChatClient = reviewChatClientProvider.getIfAvailable();
+        if (!aiEnabled || chatClient == null || reviewChatClient == null) {
             return AgentChatResponse.disabled(mode);
         }
 
         try {
+            CalendarAgentPlan plan = parsePlan(reviewChatClient, request.message());
+            AgentChatResponse gateResult = validateAutoPlan(plan, mode);
+            if (gateResult != null) {
+                return gateResult;
+            }
+
             String content = chatClient.prompt()
                     .user(request.message())
                     .call()
@@ -136,6 +165,25 @@ public class AgentService {
         } catch (Exception exception) {
             return AgentChatResponse.failed("AI 调用失败：" + exception.getMessage(), mode, ACTION_NONE, List.of());
         }
+    }
+
+    private AgentChatResponse validateAutoPlan(CalendarAgentPlan plan, String mode) {
+        List<CalendarAgentIntent> actions = plan.actions().stream()
+                .filter(action -> action != null)
+                .limit(MAX_REVIEW_ACTIONS)
+                .toList();
+        if (actions.isEmpty() || actions.stream().noneMatch(action -> !ACTION_NONE.equals(normalizeAction(action.action())))) {
+            return AgentChatResponse.failed(NO_CLEAR_INTENT_MESSAGE, mode, ACTION_NONE, List.of());
+        }
+        if (isBelowConfidenceThreshold(plan.confidence(), autoConfidenceThreshold)) {
+            return AgentChatResponse.failed("识别置信度较低，自动模式已停止执行，请切换审查模式或把日程说得更明确。", mode, ACTION_NONE, List.of());
+        }
+        boolean hasLowConfidenceAction = actions.stream()
+                .anyMatch(action -> isBelowConfidenceThreshold(effectiveConfidence(plan, action), autoConfidenceThreshold));
+        if (hasLowConfidenceAction) {
+            return AgentChatResponse.failed("识别置信度较低，自动模式已停止执行，请切换审查模式或把日程说得更明确。", mode, ACTION_NONE, List.of());
+        }
+        return null;
     }
 
     private AgentChatResponse chatWithReviewMode(AgentChatRequest request, String mode) {
@@ -175,12 +223,13 @@ public class AgentService {
                         - actions：数组。每个元素是一条独立日程操作。
 
                         单条 action 字段说明：
-                        - action：只能是 CREATE、QUERY、UPDATE、DELETE、NONE。
+                        - action：只能是 CREATE、QUERY、UPDATE、DELETE、NONE。添加/安排/提醒我/记一下 => CREATE；查看/查询/有哪些 => QUERY；修改/改到/挪到/改成 => UPDATE；删除/取消/撤销/删掉/移除/不去了/不参加/作废/不再/不用/不 + 日程内容 + 了 => DELETE。
                         - title/date/startTime/endTime/location/description/tag/reminderTime：用于创建或查询；修改/删除时 date 表示原日程所在日期；date 必须是 yyyy-MM-dd，时间必须是 HH:mm。
                         - tag 和 newTag 只能从固定值中选择：会议、工作、学习、生活、运动、出行、提醒、其他。识别不出来时必须填写“其他”。
                         - targetId：用户明确说出日程 id 时填写。
                         - targetTitleKeyword：修改或删除时，用于定位原日程的标题关键词。
                         - targetStartTime：修改或删除时，用于定位原日程的原开始时间，格式 HH:mm。
+                        - targetStartTimeFrom/targetStartTimeTo：修改或删除时，用于定位原日程开始时间范围，格式 HH:mm。上午=06:00 到 12:00，下午=12:00 到 18:00，晚上=18:00 到 23:59；没有时间段就留空。
                         - newTitle/newDate/newStartTime/newEndTime/newLocation/newDescription/newTag/newReminderTime：修改后的新字段。
                         - confidence：0 到 1 的置信度。
                         - reason：一句话说明解析理由。
@@ -190,13 +239,16 @@ public class AgentService {
                         2. “今天下午三点开会”的 title 是“开会”，date 用当前日期换算，startTime 是 15:00。
                         3. 创建日程时必须输出 tag。标签示例：开会、评审、讨论、汇报 => 会议；去工位、写代码、项目开发 => 工作；上课、复习、考试 => 学习；吃饭、购物、看病 => 生活；跑步、健身、打球 => 运动；出差、坐车、去机场 => 出行；提醒我、记得、闹钟 => 提醒。
                         4. 修改时，target 字段描述原日程，new 字段描述要改成的新内容。例如“把今天三点的会改到四点”：targetStartTime=15:00，newStartTime=16:00。
-                        5. 删除时只提取定位条件，不要假装已经删除。
-                        6. 完全没有日程管理含义时，action=NONE。
-                        7. “然后、还有、再、另外、顺便、以及”通常表示多条指令。
-                        8. 如果一句话中出现多个明确时间点和多个日程内容，通常应拆成多条 CREATE。
-                        9. 如果某一条缺少必要字段，只让这一条保留缺失字段，不要影响其它条。
-                        10. 最多输出 %d 条 action；如果超过，保留最明确的前 %d 条。
-                        11. 必须只输出 JSON 对象，不要输出 Markdown、解释文字或代码块。
+                        5. 删除时只提取定位条件，不要假装已经删除。不要只依赖固定关键词；用户表达不再执行某个已经安排的动作，或用否定句取消某个日程，本质是 DELETE。
+                        6. 例如“取消今天下午三点的会议”“今天三点的会议不去了”“今天下午不背单词了”“明天不用上课了”都必须解析为 DELETE，不是 UPDATE，也不是 NONE。
+                        7. “今天下午不背单词了”应解析为：action=DELETE，date=当前日期，targetTitleKeyword=背单词，targetStartTimeFrom=12:00，targetStartTimeTo=18:00。
+                        8. 会议、会、开会、例会、讨论、评审、汇报属于会议类关键词；用户说“会议/会”时 targetTitleKeyword 可以填写“会议”。
+                        9. 完全没有日程管理含义时，action=NONE。
+                        10. “然后、还有、再、另外、顺便、以及”通常表示多条指令。
+                        11. 如果一句话中出现多个明确时间点和多个日程内容，通常应拆成多条 CREATE。
+                        12. 如果某一条缺少必要字段，只让这一条保留缺失字段，不要影响其它条。
+                        13. 最多输出 %d 条 action；如果超过，保留最明确的前 %d 条。
+                        14. 必须只输出 JSON 对象，不要输出 Markdown、解释文字或代码块。
 
                         输出示例：
                         {
@@ -272,19 +324,31 @@ public class AgentService {
 
         for (int index = 0; index < actions.size(); index++) {
             CalendarAgentIntent intent = actions.get(index);
-            results.add(executeReviewedAction(index + 1, intent, mode, userId));
+            results.add(executeReviewedAction(index + 1, intent, mode, userId, plan.confidence()));
         }
 
         return summarizeReviewedResults(mode, results);
     }
 
-    private AgentActionResult executeReviewedAction(int index, CalendarAgentIntent intent, String mode, Long userId) {
+    private AgentActionResult executeReviewedAction(int index, CalendarAgentIntent intent, String mode, Long userId, Double planConfidence) {
         String action = normalizeAction(intent.action());
+        if (!ACTION_NONE.equals(action) && isBelowConfidenceThreshold(effectiveConfidence(planConfidence, intent), reviewConfidenceThreshold)) {
+            return new AgentActionResult(
+                    index,
+                    action,
+                    false,
+                    false,
+                    "识别置信度较低，请确认语音文本是否准确后重试。",
+                    null,
+                    List.of(),
+                    null
+            );
+        }
 
         try {
             AgentChatResponse response = switch (action) {
-                case ACTION_CREATE -> createEvent(userId, intent, mode);
-                case ACTION_QUERY -> queryEvents(userId, intent, mode);
+                case ACTION_CREATE -> prepareCreate(userId, intent, mode);
+                case ACTION_QUERY -> prepareQuery(userId, intent, mode);
                 case ACTION_UPDATE -> prepareUpdate(userId, intent, mode);
                 case ACTION_DELETE -> prepareDelete(userId, intent, mode);
                 default -> AgentChatResponse.failed(
@@ -317,25 +381,70 @@ public class AgentService {
         return AgentChatResponse.batch(content, mode, action, success, results);
     }
 
-    private AgentChatResponse createEvent(Long userId, CalendarAgentIntent intent, String mode) {
+    private AgentChatResponse prepareCreate(Long userId, CalendarAgentIntent intent, String mode) {
         if (isBlank(intent.title()) || isBlank(intent.date()) || isBlank(intent.startTime())) {
             return AgentChatResponse.failed("缺少创建日程所需的标题、日期或开始时间，请再说得具体一点。", mode, ACTION_CREATE, List.of());
         }
 
-        CalendarEvent event = eventService.createEvent(userId, new EventRequest(
+        PendingAgentAction pendingAction = confirmationStore.save(userId, new PendingAgentAction(
+                null,
+                null,
+                ACTION_CREATE,
+                null,
                 intent.title().trim(),
-                toDateTime(intent.date(), intent.startTime()),
-                toOptionalDateTime(intent.date(), intent.endTime()),
+                intent.date(),
+                intent.startTime(),
+                blankToNull(intent.endTime()),
                 blankToNull(intent.location()),
                 blankToNull(intent.description()),
                 blankToNull(intent.tag()),
-                toOptionalDateTime(intent.date(), intent.reminderTime())
+                blankToNull(intent.reminderTime())
         ));
-        return AgentChatResponse.done("已添加日程：\n" + formatEvent(event), mode, ACTION_CREATE, event, List.of(event));
+        return AgentChatResponse.confirmation(
+                "将添加这个日程，请确认：\n" + formatPendingEvent(pendingAction) + "\n确认操作会自动过期，请尽快确认。",
+                ACTION_CREATE,
+                List.of(),
+                pendingAction
+        );
     }
 
-    private AgentChatResponse queryEvents(Long userId, CalendarAgentIntent intent, String mode) {
-        LocalDate date = isBlank(intent.date()) ? null : LocalDate.parse(intent.date());
+    private AgentChatResponse prepareQuery(Long userId, CalendarAgentIntent intent, String mode) {
+        PendingAgentAction pendingAction = confirmationStore.save(userId, new PendingAgentAction(
+                null,
+                null,
+                ACTION_QUERY,
+                null,
+                null,
+                blankToNull(intent.date()),
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        ));
+        return AgentChatResponse.confirmation(
+                "将查询日程，请确认：\n" + formatPendingQuery(pendingAction) + "\n确认操作会自动过期，请尽快确认。",
+                ACTION_QUERY,
+                List.of(),
+                pendingAction
+        );
+    }
+
+    private CalendarEvent createEvent(Long userId, PendingAgentAction action) {
+        return eventService.createEvent(userId, new EventRequest(
+                action.title(),
+                toDateTime(action.date(), action.startTime()),
+                toOptionalDateTime(action.date(), action.endTime()),
+                action.location(),
+                action.description(),
+                action.tag(),
+                toOptionalDateTime(action.date(), action.reminderTime())
+        ));
+    }
+
+    private AgentChatResponse queryEvents(Long userId, String dateText, String mode) {
+        LocalDate date = isBlank(dateText) ? null : LocalDate.parse(dateText);
         List<CalendarEvent> events = eventService.findEvents(userId, date);
         if (events.isEmpty()) {
             String message = date == null ? "当前没有日程。" : "这一天没有日程：" + date;
@@ -474,14 +583,55 @@ public class AgentService {
         List<CalendarEvent> events = eventService.findEvents(userId, date);
         String keyword = blankToNull(intent.targetTitleKeyword());
         String targetStartTime = firstNonBlankOrNull(intent.targetStartTime(), intent.startTime());
+        String targetStartTimeFrom = blankToNull(intent.targetStartTimeFrom());
+        String targetStartTimeTo = blankToNull(intent.targetStartTimeTo());
 
         return events.stream()
-                .filter(event -> keyword == null || containsIgnoreCase(event.title(), keyword)
-                        || containsIgnoreCase(event.location(), keyword)
-                        || containsIgnoreCase(event.description(), keyword)
-                        || containsIgnoreCase(event.tag(), keyword))
-                .filter(event -> isBlank(targetStartTime) || event.startTime().toLocalTime().equals(LocalTime.parse(targetStartTime)))
+                .filter(event -> matchesTargetKeyword(event, keyword))
+                .filter(event -> matchesExactStartTime(event, targetStartTime))
+                .filter(event -> matchesStartTimeRange(event, targetStartTimeFrom, targetStartTimeTo))
                 .toList();
+    }
+
+    private boolean matchesExactStartTime(CalendarEvent event, String targetStartTime) {
+        return isBlank(targetStartTime) || event.startTime().toLocalTime().equals(LocalTime.parse(targetStartTime));
+    }
+
+    private boolean matchesStartTimeRange(CalendarEvent event, String from, String to) {
+        LocalTime eventStartTime = event.startTime().toLocalTime();
+        if (!isBlank(from) && eventStartTime.isBefore(LocalTime.parse(from))) {
+            return false;
+        }
+        return isBlank(to) || !eventStartTime.isAfter(LocalTime.parse(to));
+    }
+
+    private boolean matchesTargetKeyword(CalendarEvent event, String keyword) {
+        if (keyword == null) {
+            return true;
+        }
+        return containsIgnoreCase(event.title(), keyword)
+                || containsIgnoreCase(event.location(), keyword)
+                || containsIgnoreCase(event.description(), keyword)
+                || containsIgnoreCase(event.tag(), keyword)
+                || (isMeetingKeyword(keyword) && isMeetingEvent(event));
+    }
+
+    private boolean isMeetingEvent(CalendarEvent event) {
+        return isMeetingKeyword(event.title())
+                || isMeetingKeyword(event.location())
+                || isMeetingKeyword(event.description())
+                || isMeetingKeyword(event.tag());
+    }
+
+    private boolean isMeetingKeyword(String value) {
+        String normalized = blankToNull(value);
+        if (normalized == null) {
+            return false;
+        }
+        if ("会".equals(normalized)) {
+            return true;
+        }
+        return MEETING_KEYWORDS.stream().anyMatch(normalized::contains);
     }
 
     private String extractJsonObject(String content) {
@@ -528,6 +678,8 @@ public class AgentService {
                 || !isBlank(intent.date())
                 || !isBlank(intent.targetTitleKeyword())
                 || !isBlank(intent.targetStartTime())
+                || !isBlank(intent.targetStartTimeFrom())
+                || !isBlank(intent.targetStartTimeTo())
                 || !isBlank(intent.startTime());
     }
 
@@ -542,6 +694,39 @@ public class AgentService {
         appendField(builder, "标签", action.tag());
         appendField(builder, "提醒时间", action.reminderTime());
         return builder.isEmpty() ? "未识别到修改内容" : builder.toString();
+    }
+
+    private String formatPendingEvent(PendingAgentAction action) {
+        StringBuilder builder = new StringBuilder();
+        appendField(builder, "标题", action.title());
+        appendField(builder, "时间", formatPendingDateTimeRange(action.date(), action.startTime(), action.endTime()));
+        appendField(builder, "地点", action.location());
+        appendField(builder, "标签", action.tag());
+        appendField(builder, "提醒", formatPendingDateTime(action.date(), action.reminderTime()));
+        appendField(builder, "备注", action.description());
+        return builder.toString();
+    }
+
+    private String formatPendingQuery(PendingAgentAction action) {
+        return isBlank(action.date()) ? "范围：全部日程" : "日期：" + action.date().trim();
+    }
+
+    private String formatPendingDateTimeRange(String date, String startTime, String endTime) {
+        if (isBlank(date) || isBlank(startTime)) {
+            return null;
+        }
+        String start = date.trim() + " " + startTime.trim();
+        if (isBlank(endTime)) {
+            return start;
+        }
+        return start + "-" + endTime.trim();
+    }
+
+    private String formatPendingDateTime(String date, String time) {
+        if (isBlank(date) || isBlank(time)) {
+            return null;
+        }
+        return date.trim() + " " + time.trim();
     }
 
     private void appendField(StringBuilder builder, String label, String value) {
@@ -637,6 +822,18 @@ public class AgentService {
 
     private String normalizeMode(String mode) {
         return MODE_AUTO.equalsIgnoreCase(blankToNull(mode)) ? MODE_AUTO : MODE_REVIEW;
+    }
+
+    private Double effectiveConfidence(CalendarAgentPlan plan, CalendarAgentIntent intent) {
+        return effectiveConfidence(plan.confidence(), intent);
+    }
+
+    private Double effectiveConfidence(Double planConfidence, CalendarAgentIntent intent) {
+        return intent.confidence() == null ? planConfidence : intent.confidence();
+    }
+
+    private boolean isBelowConfidenceThreshold(Double confidence, double threshold) {
+        return confidence == null || confidence < threshold;
     }
 
     private boolean isForbiddenAutoModeReply(String content) {
