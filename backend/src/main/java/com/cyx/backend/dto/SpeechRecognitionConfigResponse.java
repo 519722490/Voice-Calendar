@@ -7,6 +7,8 @@ public record SpeechRecognitionConfigResponse(
         String endpoint,
         int sampleRate,
         String format,
+        int maxSentenceSilence,
+        boolean semanticPunctuationEnabled,
         boolean apiKeyConfigured
 ) {
 }

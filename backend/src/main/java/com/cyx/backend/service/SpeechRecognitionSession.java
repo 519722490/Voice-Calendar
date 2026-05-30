@@ -198,7 +198,9 @@ public class SpeechRecognitionSession {
                         "model", properties.getModel(),
                         "parameters", Map.of(
                                 "format", properties.getFormat(),
-                                "sample_rate", properties.getSampleRate()
+                                "sample_rate", properties.getSampleRate(),
+                                "semantic_punctuation_enabled", properties.isSemanticPunctuationEnabled(),
+                                "max_sentence_silence", properties.getMaxSentenceSilence()
                         ),
                         "input", Map.of()
                 )

@@ -38,6 +38,7 @@ type CalendarDay = {
 
 type VoiceStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'error'
 type AgentMode = 'review' | 'auto'
+type SpeechSubmitMode = 'manual' | 'auto'
 
 type PendingAgentAction = {
   id: string
@@ -127,6 +128,8 @@ const voiceError = ref('')
 const voiceAgentMessage = ref('')
 const voiceAgentSubmitting = ref(false)
 const voiceAgentMode = ref<AgentMode>('review')
+const speechSubmitMode = ref<SpeechSubmitMode>('manual')
+const voiceAutoSubmitting = ref(false)
 const pendingAgentAction = ref<PendingAgentAction | null>(null)
 const editingEvent = ref<CalendarEvent | null>(null)
 const pendingDeleteId = ref<number | null>(null)
@@ -138,6 +141,10 @@ let audioWorkletNode: AudioWorkletNode | null = null
 let silenceGainNode: GainNode | null = null
 let finalVoiceText = ''
 let voiceConversationId = ''
+let voiceAutoSubmitTimer: number | undefined
+let voiceAutoSubmitTriggered = false
+
+const VOICE_AUTO_SUBMIT_DELAY_MS = 600
 
 const form = reactive<EventForm>({
   title: '',
@@ -169,6 +176,14 @@ const selectedTitle = computed(() => {
 })
 
 const voiceStatusText = computed(() => {
+  if (voiceAutoSubmitting.value) {
+    return '自动提交中'
+  }
+
+  if (voiceAgentSubmitting.value) {
+    return '发送中'
+  }
+
   const statusText: Record<VoiceStatus, string> = {
     idle: '未开始',
     connecting: '正在连接',
@@ -181,15 +196,19 @@ const voiceStatusText = computed(() => {
 })
 
 const canStartVoice = computed(() => {
-  return voiceStatus.value === 'idle' || voiceStatus.value === 'error'
+  return (voiceStatus.value === 'idle' || voiceStatus.value === 'error') && !voiceAgentSubmitting.value && !voiceAutoSubmitting.value
 })
 
 const canStopVoice = computed(() => {
-  return voiceStatus.value === 'connecting' || voiceStatus.value === 'recording'
+  return (voiceStatus.value === 'connecting' || voiceStatus.value === 'recording') && !voiceAutoSubmitting.value
 })
 
 const canSubmitVoiceToAgent = computed(() => {
-  return Boolean(voiceText.value.trim()) && !voiceAgentSubmitting.value
+  return Boolean(voiceText.value.trim()) && !voiceAgentSubmitting.value && !voiceAutoSubmitting.value
+})
+
+const canChangeSpeechSubmitMode = computed(() => {
+  return voiceStatus.value === 'idle' || voiceStatus.value === 'error'
 })
 
 const scheduleDates = computed(() => {
@@ -236,6 +255,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearVoiceAutoSubmitTimer()
   cleanupSpeechSocket()
   stopAudioCapture()
 })
@@ -399,12 +419,14 @@ function openVoiceForm() {
   voiceError.value = ''
   voiceAgentMessage.value = ''
   pendingAgentAction.value = null
+  resetVoiceAutoSubmitState()
   voiceConversationId = `voice-${Date.now()}`
   voiceStatus.value = 'idle'
   isVoiceFormOpen.value = true
 }
 
 function closeVoiceForm() {
+  resetVoiceAutoSubmitState()
   cleanupSpeechSocket()
   stopAudioCapture()
   isVoiceFormOpen.value = false
@@ -420,6 +442,7 @@ async function startVoiceRecognition() {
   voiceError.value = ''
   voiceAgentMessage.value = ''
   pendingAgentAction.value = null
+  resetVoiceAutoSubmitState()
   voiceStatus.value = 'connecting'
 
   try {
@@ -515,6 +538,7 @@ function stopVoiceRecognition() {
     return
   }
 
+  clearVoiceAutoSubmitTimer()
   stopAudioCapture()
   voiceStatus.value = 'stopping'
 
@@ -627,12 +651,19 @@ function handleSpeechMessage(rawMessage: unknown) {
   }
 
   if (data.type === 'transcript' && data.text) {
-    updateVoiceText(data.text, Boolean(data.final))
+    const isFinal = Boolean(data.final)
+    updateVoiceText(data.text, isFinal)
+
+    if (isFinal) {
+      scheduleVoiceAutoSubmit()
+    }
+
     return
   }
 
   if (data.type === 'finished' || data.type === 'stopped' || data.type === 'closed') {
     voiceStatus.value = 'idle'
+    clearVoiceAutoSubmitTimer()
     cleanupSpeechSocket()
     stopAudioCapture()
     return
@@ -641,6 +672,7 @@ function handleSpeechMessage(rawMessage: unknown) {
   if (data.type === 'error') {
     voiceStatus.value = 'error'
     voiceError.value = data.message ?? '语音识别失败'
+    resetVoiceAutoSubmitState()
     cleanupSpeechSocket()
     stopAudioCapture()
   }
@@ -666,6 +698,63 @@ function appendVoiceText(current: string, next: string) {
   }
 
   return `${current}${next}`
+}
+
+function scheduleVoiceAutoSubmit() {
+  if (speechSubmitMode.value !== 'auto' || voiceAutoSubmitTriggered || voiceAutoSubmitting.value) {
+    return
+  }
+
+  if (!voiceText.value.trim()) {
+    voiceError.value = '没有识别到有效语音内容'
+    return
+  }
+
+  voiceAutoSubmitTriggered = true
+  voiceError.value = ''
+  clearVoiceAutoSubmitTimer()
+  voiceAutoSubmitTimer = window.setTimeout(() => {
+    voiceAutoSubmitTimer = undefined
+    void runVoiceAutoSubmit()
+  }, VOICE_AUTO_SUBMIT_DELAY_MS)
+}
+
+async function runVoiceAutoSubmit() {
+  if (voiceAutoSubmitting.value || voiceAgentSubmitting.value) {
+    return
+  }
+
+  if (!voiceText.value.trim()) {
+    voiceError.value = '没有识别到有效语音内容'
+    return
+  }
+
+  if (canStopVoice.value) {
+    stopVoiceRecognition()
+  }
+
+  voiceAutoSubmitting.value = true
+
+  try {
+    await submitVoiceToAgent()
+  } finally {
+    voiceAutoSubmitting.value = false
+  }
+}
+
+function clearVoiceAutoSubmitTimer() {
+  if (voiceAutoSubmitTimer === undefined) {
+    return
+  }
+
+  window.clearTimeout(voiceAutoSubmitTimer)
+  voiceAutoSubmitTimer = undefined
+}
+
+function resetVoiceAutoSubmitState() {
+  clearVoiceAutoSubmitTimer()
+  voiceAutoSubmitTriggered = false
+  voiceAutoSubmitting.value = false
 }
 
 function cleanupSpeechSocket() {
@@ -1168,21 +1257,48 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
             </div>
           </div>
 
-          <div class="agent-mode-switch field-full" role="group" aria-label="Agent 执行模式">
-            <button
-              type="button"
-              :class="{ active: voiceAgentMode === 'review' }"
-              @click="voiceAgentMode = 'review'"
-            >
-              稳妥模式
-            </button>
-            <button
-              type="button"
-              :class="{ active: voiceAgentMode === 'auto' }"
-              @click="voiceAgentMode = 'auto'"
-            >
-              自动模式
-            </button>
+          <div class="voice-mode-row field-full">
+            <span class="voice-mode-label">语音提交</span>
+            <div class="agent-mode-switch" role="group" aria-label="语音提交模式">
+              <button
+                type="button"
+                :class="{ active: speechSubmitMode === 'manual' }"
+                :disabled="!canChangeSpeechSubmitMode"
+                @click="speechSubmitMode = 'manual'"
+              >
+                手动确认
+              </button>
+              <button
+                type="button"
+                :class="{ active: speechSubmitMode === 'auto' }"
+                :disabled="!canChangeSpeechSubmitMode"
+                @click="speechSubmitMode = 'auto'"
+              >
+                静音自动提交
+              </button>
+            </div>
+          </div>
+
+          <div class="voice-mode-row field-full">
+            <span class="voice-mode-label">Agent 执行</span>
+            <div class="agent-mode-switch" role="group" aria-label="Agent 执行模式">
+              <button
+                type="button"
+                :class="{ active: voiceAgentMode === 'review' }"
+                :disabled="voiceAgentSubmitting || voiceAutoSubmitting"
+                @click="voiceAgentMode = 'review'"
+              >
+                稳妥模式
+              </button>
+              <button
+                type="button"
+                :class="{ active: voiceAgentMode === 'auto' }"
+                :disabled="voiceAgentSubmitting || voiceAutoSubmitting"
+                @click="voiceAgentMode = 'auto'"
+              >
+                自动模式
+              </button>
+            </div>
           </div>
 
           <label class="field field-full">
@@ -1190,6 +1306,7 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
             <textarea
               v-model="voiceText"
               rows="7"
+              :disabled="voiceAgentSubmitting || voiceAutoSubmitting"
               placeholder="例如：今天下午三点开项目会"
             ></textarea>
           </label>
@@ -1214,7 +1331,7 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
             <button class="today-button" type="button" @click="closeVoiceForm">取消</button>
             <button class="primary-button voice-action-button" type="submit" :disabled="!canSubmitVoiceToAgent">
               <Send :size="16" :stroke-width="2.4" aria-hidden="true" />
-              <span>{{ voiceAgentSubmitting ? '发送中...' : '发送给 Agent' }}</span>
+              <span>{{ voiceAutoSubmitting ? '自动发送中...' : voiceAgentSubmitting ? '发送中...' : '发送给 Agent' }}</span>
             </button>
           </footer>
         </form>
