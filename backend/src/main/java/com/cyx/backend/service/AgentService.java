@@ -154,6 +154,7 @@ public class AgentService {
                         JSON 字段说明：
                         - action：只能是 CREATE、QUERY、UPDATE、DELETE、NONE。
                         - title/date/startTime/endTime/location/description/tag/reminderTime：用于创建或查询；修改/删除时 date 表示原日程所在日期；date 必须是 yyyy-MM-dd，时间必须是 HH:mm。
+                        - tag 和 newTag 只能从固定值中选择：会议、工作、学习、生活、运动、出行、提醒、其他。识别不出来时必须填写“其他”。
                         - targetId：用户明确说出日程 id 时填写。
                         - targetTitleKeyword：修改或删除时，用于定位原日程的标题关键词。
                         - targetStartTime：修改或删除时，用于定位原日程的原开始时间，格式 HH:mm。
@@ -164,10 +165,11 @@ public class AgentService {
                         规则：
                         1. 用户表达添加日程时用 CREATE；只要有日期、开始时间和日程内容即可创建。
                         2. “今天下午三点开会”的 title 是“开会”，date 用当前日期换算，startTime 是 15:00。
-                        3. 修改时，target 字段描述原日程，new 字段描述要改成的新内容。例如“把今天三点的会改到四点”：targetStartTime=15:00，newStartTime=16:00。
-                        4. 删除时只提取定位条件，不要假装已经删除。
-                        5. 完全没有日程管理含义时，action=NONE。
-                        6. 只输出 JSON 对象，不要输出其它任何内容。
+                        3. 创建日程时必须输出 tag。标签示例：开会、评审、讨论、汇报 => 会议；去工位、写代码、项目开发 => 工作；上课、复习、考试 => 学习；吃饭、购物、看病 => 生活；跑步、健身、打球 => 运动；出差、坐车、去机场 => 出行；提醒我、记得、闹钟 => 提醒。
+                        4. 修改时，target 字段描述原日程，new 字段描述要改成的新内容。例如“把今天三点的会改到四点”：targetStartTime=15:00，newStartTime=16:00。
+                        5. 删除时只提取定位条件，不要假装已经删除。
+                        6. 完全没有日程管理含义时，action=NONE。
+                        7. 只输出 JSON 对象，不要输出其它任何内容。
 
                         用户语音文本：%s
                         """.formatted(now.toLocalDateTime(), now.toLocalDate(), agentZoneId, message))
