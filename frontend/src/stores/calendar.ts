@@ -7,6 +7,7 @@ import {
   addDays,
   getDatePart,
   getEventDateKeys,
+  getEventKey,
   getTimePart,
   isSameDate,
   parseDateKey,
@@ -47,6 +48,7 @@ export const useCalendarStore = defineStore('calendar', () => {
   const isFormOpen = ref(false)
   const editingEvent = ref<CalendarEvent | null>(null)
   const pendingDeleteId = ref<number | null>(null)
+  const highlightedEventKeys = ref<string[]>([])
 
   const form = reactive<EventForm>({
     title: '',
@@ -253,9 +255,45 @@ export const useCalendarStore = defineStore('calendar', () => {
       await http.delete(`/api/events/${event.id}`)
       await loadEvents()
       pendingDeleteId.value = null
+      clearHighlightedEvent(event)
     } catch (error) {
       errorMessage.value = getApiErrorMessage(error, '删除失败')
     }
+  }
+
+  function highlightEvent(event: CalendarEvent | null | undefined) {
+    highlightEvents(event ? [event] : [])
+  }
+
+  function highlightEvents(items: CalendarEvent[]) {
+    highlightedEventKeys.value = Array.from(new Set(items.map((item) => getEventKey(item))))
+
+    const firstItem = items[0]
+    if (!firstItem) {
+      return
+    }
+
+    const date = parseDateKey(getDatePart(firstItem.startTime))
+    selectedDate.value = date
+    visibleMonth.value = new Date(date.getFullYear(), date.getMonth(), 1)
+  }
+
+  function isHighlightedEvent(event: CalendarEvent) {
+    return highlightedEventKeys.value.includes(getEventKey(event))
+  }
+
+  function clearHighlightedEvent(event?: CalendarEvent) {
+    if (!event) {
+      highlightedEventKeys.value = []
+      return
+    }
+
+    const eventKey = getEventKey(event)
+    if (!highlightedEventKeys.value.includes(eventKey)) {
+      return
+    }
+
+    highlightedEventKeys.value = highlightedEventKeys.value.filter((key) => key !== eventKey)
   }
 
   function resetForm(dateKey: string) {
@@ -285,6 +323,7 @@ export const useCalendarStore = defineStore('calendar', () => {
     isFormOpen.value = false
     editingEvent.value = null
     pendingDeleteId.value = null
+    highlightedEventKeys.value = []
   }
 
   return {
@@ -315,6 +354,10 @@ export const useCalendarStore = defineStore('calendar', () => {
     requestDelete,
     cancelDelete,
     confirmDelete,
+    highlightEvent,
+    highlightEvents,
+    isHighlightedEvent,
+    clearHighlightedEvent,
     resetCalendar,
   }
 })

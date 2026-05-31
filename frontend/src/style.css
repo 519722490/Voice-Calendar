@@ -233,6 +233,21 @@ h3 {
   font-weight: 800;
 }
 
+.voice-entry-button {
+  display: inline-flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 20px;
+  font-size: 15px;
+  box-shadow: 0 10px 26px rgba(38, 114, 111, 0.18);
+}
+
+.voice-entry-button svg {
+  flex: 0 0 auto;
+}
+
 .primary-button:hover {
   background: var(--accent-strong);
   color: #ffffff;
@@ -405,6 +420,20 @@ h3 {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.agenda-item.highlighted {
+  border-color: #e1a84f;
+  background: #fffaf2;
+  box-shadow: inset 0 0 0 2px rgba(225, 168, 79, 0.24);
+}
+
+.agenda-item.highlighted time {
+  color: var(--warning);
 }
 
 .agenda-item time {
@@ -447,6 +476,11 @@ h3 {
 .recurring-tag {
   background: #e6f4ef;
   color: #15705c;
+}
+
+.highlight-tag {
+  background: #fff1d8;
+  color: #9a5b12;
 }
 
 .agenda-actions {
@@ -1165,8 +1199,8 @@ h3 {
     justify-content: space-between;
   }
 
-  .header-actions .mic-button {
-    flex: 0 0 40px;
+  .header-actions .voice-entry-button {
+    flex: 1 1 100%;
   }
 
   h1 {
@@ -1207,6 +1241,15 @@ h3 {
   .tag {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .agenda-tags {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .agenda-tags .tag {
+    grid-column: auto;
   }
 
   .agenda-actions {

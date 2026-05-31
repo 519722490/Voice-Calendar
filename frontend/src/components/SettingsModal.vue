@@ -9,8 +9,8 @@ const voiceStore = useVoiceStore()
     <section class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <header class="modal-header">
         <div>
-          <p class="eyebrow">Settings</p>
-          <h2 id="settings-title">语音与 Agent 设置</h2>
+          <p class="eyebrow">设置</p>
+          <h2 id="settings-title">语音与执行设置</h2>
         </div>
         <button class="icon-button" type="button" aria-label="关闭" @click="voiceStore.closeSettings">×</button>
       </header>
@@ -19,7 +19,7 @@ const voiceStore = useVoiceStore()
         <section class="settings-section" aria-label="语音提交模式">
           <div>
             <h3>语音提交</h3>
-            <p>控制识别文本什么时候发送给 Agent。</p>
+            <p>控制识别出的文字什么时候发送给日程助手。</p>
           </div>
           <div class="agent-mode-switch" role="group" aria-label="语音提交模式">
             <button
@@ -41,12 +41,12 @@ const voiceStore = useVoiceStore()
           </div>
         </section>
 
-        <section class="settings-section" aria-label="Agent 执行模式">
+        <section class="settings-section" aria-label="日程执行模式">
           <div>
-            <h3>Agent 执行</h3>
-            <p>控制 Agent 收到文本后的执行方式。</p>
+            <h3>执行方式</h3>
+            <p>控制日程助手收到文字后，是先让你确认，还是直接尝试执行。</p>
           </div>
-          <div class="agent-mode-switch" role="group" aria-label="Agent 执行模式">
+          <div class="agent-mode-switch" role="group" aria-label="日程执行模式">
             <button
               type="button"
               :class="{ active: voiceStore.voiceAgentMode === 'review' }"

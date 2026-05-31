@@ -22,20 +22,20 @@ watch(
   <button
     class="assistant-fab"
     type="button"
-    title="AI 助手"
-    aria-label="打开 AI 助手"
+    title="智能日历助手"
+    aria-label="打开智能日历助手"
     @click="assistantStore.toggleAssistant"
   >
     <Bot :size="24" :stroke-width="2.4" aria-hidden="true" />
   </button>
 
-  <aside v-if="assistantStore.isOpen" class="assistant-panel" aria-label="AI 助手">
+  <aside v-if="assistantStore.isOpen" class="assistant-panel" aria-label="智能日历助手">
     <header class="assistant-header">
       <div>
-        <p class="eyebrow">AI Assistant</p>
+        <p class="eyebrow">智能助手</p>
         <h2>日历助手</h2>
       </div>
-      <button class="icon-button" type="button" aria-label="关闭 AI 助手" @click="assistantStore.closeAssistant">
+      <button class="icon-button" type="button" aria-label="关闭智能日历助手" @click="assistantStore.closeAssistant">
         <X :size="18" :stroke-width="2.4" aria-hidden="true" />
       </button>
     </header>

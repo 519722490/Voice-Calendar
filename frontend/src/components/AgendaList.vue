@@ -9,7 +9,7 @@ const calendarStore = useCalendarStore()
   <section class="agenda-panel" aria-label="已选日期日程">
     <div class="agenda-header">
       <div>
-        <p class="eyebrow">Selected Day</p>
+        <p class="eyebrow">已选日期</p>
         <h2>{{ calendarStore.selectedTitle }} 日程</h2>
       </div>
       <span class="agenda-count">{{ calendarStore.selectedSchedules.length }} 项</span>
@@ -21,7 +21,13 @@ const calendarStore = useCalendarStore()
     </div>
 
     <div v-else-if="calendarStore.selectedSchedules.length" class="agenda-list">
-      <article v-for="item in calendarStore.selectedSchedules" :key="getEventKey(item)" class="agenda-item">
+      <article
+        v-for="item in calendarStore.selectedSchedules"
+        :key="getEventKey(item)"
+        class="agenda-item"
+        :class="{ highlighted: calendarStore.isHighlightedEvent(item) }"
+        @click="calendarStore.clearHighlightedEvent(item)"
+      >
         <time>{{ getTimePart(item.startTime) }}</time>
         <div class="agenda-content">
           <h3>{{ item.title }}</h3>
@@ -33,6 +39,7 @@ const calendarStore = useCalendarStore()
           <p v-if="item.description" class="agenda-description">{{ item.description }}</p>
         </div>
         <div class="agenda-tags">
+          <span v-if="calendarStore.isHighlightedEvent(item)" class="tag highlight-tag">刚刚添加</span>
           <span class="tag">{{ item.tag }}</span>
           <span v-if="item.sourceType === 'RECURRING'" class="tag recurring-tag">重复</span>
         </div>

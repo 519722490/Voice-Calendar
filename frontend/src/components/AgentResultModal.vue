@@ -2,6 +2,19 @@
 import { useVoiceStore } from '../stores/voice'
 
 const voiceStore = useVoiceStore()
+
+const actionText: Record<string, string> = {
+  CREATE: '添加日程',
+  CREATE_RECURRING: '添加重复日程',
+  DELETE: '删除日程',
+  DELETE_RECURRING: '删除重复日程',
+  QUERY: '查看日程',
+  NONE: '未识别',
+}
+
+function getActionText(action: string) {
+  return actionText[action] ?? '日程操作'
+}
 </script>
 
 <template>
@@ -13,7 +26,7 @@ const voiceStore = useVoiceStore()
     <section class="modal agent-result-modal" role="dialog" aria-modal="true" aria-labelledby="agent-result-title">
       <header class="modal-header">
         <div>
-          <p class="eyebrow">Agent Result</p>
+          <p class="eyebrow">语音结果</p>
           <h2 id="agent-result-title">{{ voiceStore.agentResultTitle }}</h2>
         </div>
         <button class="icon-button" type="button" aria-label="关闭" @click="voiceStore.closeAgentResult">×</button>
@@ -35,7 +48,7 @@ const voiceStore = useVoiceStore()
           >
             <div class="agent-result-meta">
               <strong>第 {{ result.index }} 条</strong>
-              <span>{{ result.action }}</span>
+              <span>{{ getActionText(result.action) }}</span>
             </div>
             <p>{{ result.message }}</p>
             <div
