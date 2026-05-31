@@ -4,6 +4,10 @@
 
 https://www.bilibili.com/video/BV12eVU6nEs1/
 
+## 在线试用地址（服务器可能停止）
+
+http://121.40.210.76/login
+
 
 
 Voice Calendar 是一个语音版日历工具，支持用户登录、普通日程管理、重复日程规则管理、实时语音识别，以及基于大模型的自然语言日程操作。
