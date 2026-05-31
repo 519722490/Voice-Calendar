@@ -4,6 +4,7 @@ import './style.css'
 import App from './App.vue'
 import { onAuthFailure } from './api/http'
 import { router } from './router'
+import { useAssistantStore } from './stores/assistant'
 import { useAuthStore } from './stores/auth'
 import { useCalendarStore } from './stores/calendar'
 import { useRecurringStore } from './stores/recurring'
@@ -17,6 +18,7 @@ app.use(pinia)
 const authStore = useAuthStore()
 
 onAuthFailure(() => {
+  useAssistantStore().resetAssistant()
   useVoiceStore().resetVoice()
   useRecurringStore().resetRecurring()
   useCalendarStore().resetCalendar()
