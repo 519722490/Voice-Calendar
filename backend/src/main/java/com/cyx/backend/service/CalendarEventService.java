@@ -9,16 +9,22 @@ import com.cyx.backend.repository.CalendarEventJpaRepository;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.Comparator;
 import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class CalendarEventService {
-    private final CalendarEventJpaRepository repository;
+    private static final long MAX_RANGE_QUERY_DAYS = 370;
 
-    public CalendarEventService(CalendarEventJpaRepository repository) {
+    private final CalendarEventJpaRepository repository;
+    private final RecurringEventService recurringEventService;
+
+    public CalendarEventService(CalendarEventJpaRepository repository, RecurringEventService recurringEventService) {
         this.repository = repository;
+        this.recurringEventService = recurringEventService;
     }
 
     @Transactional(readOnly = true)
@@ -27,9 +33,33 @@ public class CalendarEventService {
                 ? repository.findAllByUserIdOrderByStartTimeAsc(userId)
                 : repository.findEventsOnDate(userId, date.atStartOfDay(), date.plusDays(1).atStartOfDay());
 
-        return events.stream()
+        List<CalendarEvent> singleEvents = events.stream()
                 .map(this::toResponse)
                 .toList();
+        if (date == null) {
+            return singleEvents;
+        }
+        return mergeAndSort(singleEvents, recurringEventService.findInstances(userId, date));
+    }
+
+    @Transactional(readOnly = true)
+    public List<CalendarEvent> findEvents(Long userId, LocalDate from, LocalDate to) {
+        if (from == null || to == null) {
+            throw new IllegalArgumentException("查询开始日期和结束日期不能为空");
+        }
+        if (to.isBefore(from)) {
+            throw new IllegalArgumentException("查询结束日期不能早于开始日期");
+        }
+        if (ChronoUnit.DAYS.between(from, to) > MAX_RANGE_QUERY_DAYS) {
+            throw new IllegalArgumentException("查询范围不能超过 " + MAX_RANGE_QUERY_DAYS + " 天");
+        }
+
+        List<CalendarEvent> singleEvents = repository
+                .findEventsInRange(userId, from.atStartOfDay(), to.plusDays(1).atStartOfDay())
+                .stream()
+                .map(this::toResponse)
+                .toList();
+        return mergeAndSort(singleEvents, recurringEventService.findInstances(userId, from, to));
     }
 
     @Transactional(readOnly = true)
@@ -122,5 +152,11 @@ public class CalendarEventService {
                 entity.getCreatedAt(),
                 entity.getUpdatedAt()
         );
+    }
+
+    private List<CalendarEvent> mergeAndSort(List<CalendarEvent> singleEvents, List<CalendarEvent> recurringInstances) {
+        return java.util.stream.Stream.concat(singleEvents.stream(), recurringInstances.stream())
+                .sorted(Comparator.comparing(CalendarEvent::startTime))
+                .toList();
     }
 }

@@ -3,7 +3,7 @@ import { LogOut, Mic, Send, Settings, Square } from 'lucide-vue-next'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 
 type CalendarEvent = {
-  id: number
+  id: number | null
   title: string
   startTime: string
   endTime: string | null
@@ -13,6 +13,9 @@ type CalendarEvent = {
   reminderTime: string | null
   createdAt: string
   updatedAt: string
+  sourceType?: 'SINGLE' | 'RECURRING'
+  recurringEventId?: number | null
+  instanceKey?: string | null
 }
 
 type EventForm = {
@@ -44,11 +47,17 @@ type PendingAgentAction = {
   id: string
   expiresAt: string
   action: string
-  eventId: number
+  eventId?: number | null
+  recurringEventId?: number | null
   title?: string | null
   date?: string | null
+  startDate?: string | null
+  endDate?: string | null
   startTime?: string | null
   endTime?: string | null
+  recurrenceType?: string | null
+  intervalValue?: number | null
+  daysOfWeek?: string[]
   location?: string | null
   description?: string | null
   tag?: string | null
@@ -65,6 +74,7 @@ type AgentChatResponse = {
   event: CalendarEvent | null
   candidates: CalendarEvent[]
   pendingAction: PendingAgentAction | null
+  pendingRecurringAction?: PendingAgentAction | null
   batch?: boolean
   results?: AgentActionResult[]
 }
@@ -78,6 +88,7 @@ type AgentActionResult = {
   event: CalendarEvent | null
   candidates: CalendarEvent[]
   pendingAction: PendingAgentAction | null
+  pendingRecurringAction?: PendingAgentAction | null
 }
 
 type UserProfile = {
@@ -233,7 +244,7 @@ const canUseVoiceEntry = computed(() => {
 })
 
 const hasAgentPendingAction = computed(() => {
-  return Boolean(pendingAgentAction.value || voiceAgentResults.value.some((result) => result.pendingAction))
+  return Boolean(pendingAgentAction.value || voiceAgentResults.value.some((result) => result.pendingAction || result.pendingRecurringAction))
 })
 
 const agentResultTitle = computed(() => {
@@ -423,7 +434,8 @@ async function loadEvents() {
   errorMessage.value = ''
 
   try {
-    const response = await authorizedFetch(`${API_BASE_URL}/api/events`)
+    const [from, to] = getVisibleDateRange()
+    const response = await authorizedFetch(`${API_BASE_URL}/api/events?from=${from}&to=${to}`)
     if (!response.ok) {
       throw new Error(await getResponseMessage(response))
     }
@@ -440,12 +452,14 @@ function selectDay(day: CalendarDay) {
 
   if (!day.isCurrentMonth) {
     visibleMonth.value = new Date(day.date.getFullYear(), day.date.getMonth(), 1)
+    void loadEvents()
   }
 }
 
 function moveMonth(step: number) {
   const current = visibleMonth.value
   visibleMonth.value = new Date(current.getFullYear(), current.getMonth() + step, 1)
+  void loadEvents()
 }
 
 function backToToday() {
@@ -628,8 +642,9 @@ async function confirmPendingAgentAction(action: PendingAgentAction | null = pen
 
 function findFirstPendingAction(response: AgentChatResponse) {
   return (
-    response.results?.find((result) => result.pendingAction)?.pendingAction ??
-    (response.needsConfirmation ? response.pendingAction : null)
+    response.results?.find((result) => result.pendingAction || result.pendingRecurringAction)?.pendingAction ??
+    response.results?.find((result) => result.pendingAction || result.pendingRecurringAction)?.pendingRecurringAction ??
+    (response.needsConfirmation ? response.pendingAction ?? response.pendingRecurringAction ?? null : null)
   )
 }
 
@@ -641,7 +656,7 @@ function updateConfirmedAgentResult(actionId: string, response: AgentChatRespons
   }
 
   voiceAgentResults.value = voiceAgentResults.value.map((result) => {
-    if (result.pendingAction?.id !== actionId) {
+    if (result.pendingAction?.id !== actionId && result.pendingRecurringAction?.id !== actionId) {
       return result
     }
 
@@ -653,10 +668,13 @@ function updateConfirmedAgentResult(actionId: string, response: AgentChatRespons
       event: response.event,
       candidates: response.candidates,
       pendingAction: response.needsConfirmation ? response.pendingAction : null,
+      pendingRecurringAction: response.needsConfirmation ? response.pendingRecurringAction : null,
     }
   })
 
-  pendingAgentAction.value = voiceAgentResults.value.find((result) => result.pendingAction)?.pendingAction ?? null
+  pendingAgentAction.value = voiceAgentResults.value.find((result) => result.pendingAction || result.pendingRecurringAction)?.pendingAction
+    ?? voiceAgentResults.value.find((result) => result.pendingAction || result.pendingRecurringAction)?.pendingRecurringAction
+    ?? null
 }
 
 function showAgentResult() {
@@ -937,6 +955,9 @@ function openCreateForm() {
 }
 
 function openEditForm(event: CalendarEvent) {
+  if (event.sourceType === 'RECURRING') {
+    return
+  }
   editingEvent.value = event
   form.title = event.title
   form.date = getDatePart(event.startTime)
@@ -1013,6 +1034,9 @@ async function submitForm() {
 }
 
 function requestDelete(event: CalendarEvent) {
+  if (event.sourceType === 'RECURRING' || event.id === null) {
+    return
+  }
   pendingDeleteId.value = event.id
 }
 
@@ -1021,6 +1045,9 @@ function cancelDelete() {
 }
 
 async function confirmDelete(event: CalendarEvent) {
+  if (event.id === null) {
+    return
+  }
   errorMessage.value = ''
 
   try {
@@ -1074,6 +1101,18 @@ function getEventDateKeys(event: CalendarEvent) {
   }
 
   return dates
+}
+
+function getVisibleDateRange() {
+  const firstDay = visibleMonth.value
+  const startOffset = (firstDay.getDay() + 6) % 7
+  const gridStart = addDays(firstDay, -startOffset)
+  const gridEnd = addDays(gridStart, 41)
+  return [toDateKey(gridStart), toDateKey(gridEnd)]
+}
+
+function getEventKey(event: CalendarEvent) {
+  return event.instanceKey ?? `${event.sourceType ?? 'SINGLE'}-${event.id ?? event.startTime}-${event.title}`
 }
 
 function toDateKey(date: Date) {
@@ -1293,7 +1332,7 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
       </div>
 
       <div v-else-if="selectedSchedules.length" class="agenda-list">
-        <article v-for="item in selectedSchedules" :key="item.id" class="agenda-item">
+        <article v-for="item in selectedSchedules" :key="getEventKey(item)" class="agenda-item">
           <time>{{ getTimePart(item.startTime) }}</time>
           <div class="agenda-content">
             <h3>{{ item.title }}</h3>
@@ -1304,9 +1343,15 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
             </p>
             <p v-if="item.description" class="agenda-description">{{ item.description }}</p>
           </div>
-          <span class="tag">{{ item.tag }}</span>
+          <div class="agenda-tags">
+            <span class="tag">{{ item.tag }}</span>
+            <span v-if="item.sourceType === 'RECURRING'" class="tag recurring-tag">重复</span>
+          </div>
           <div class="agenda-actions">
-            <template v-if="pendingDeleteId === item.id">
+            <template v-if="item.sourceType === 'RECURRING'">
+              <span class="agenda-action-note">规则日程</span>
+            </template>
+            <template v-else-if="pendingDeleteId === item.id">
               <button type="button" class="danger confirm" @click="confirmDelete(item)">确认删除</button>
               <button type="button" @click="cancelDelete">取消</button>
             </template>
@@ -1537,11 +1582,11 @@ function buildSpeechWsUrl(apiBaseUrl: string, token: string) {
               </div>
               <p>{{ result.message }}</p>
               <button
-                v-if="result.pendingAction"
+              v-if="result.pendingAction || result.pendingRecurringAction"
                 class="primary-button voice-confirm-button"
                 type="button"
                 :disabled="voiceAgentSubmitting"
-                @click="confirmPendingAgentAction(result.pendingAction)"
+                @click="confirmPendingAgentAction(result.pendingAction ?? result.pendingRecurringAction ?? null)"
               >
                 确认执行
               </button>

@@ -8,6 +8,9 @@ import com.cyx.backend.dto.CalendarAgentPlan;
 import com.cyx.backend.dto.CalendarEvent;
 import com.cyx.backend.dto.EventRequest;
 import com.cyx.backend.dto.PendingAgentAction;
+import com.cyx.backend.dto.PendingRecurringAgentAction;
+import com.cyx.backend.dto.RecurringEventRequest;
+import com.cyx.backend.dto.RecurringEventResponse;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
@@ -33,8 +36,11 @@ public class AgentService {
     private static final String ACTION_QUERY = "QUERY";
     private static final String ACTION_UPDATE = "UPDATE";
     private static final String ACTION_DELETE = "DELETE";
+    private static final String ACTION_CREATE_RECURRING = "CREATE_RECURRING";
+    private static final String ACTION_DELETE_RECURRING = "DELETE_RECURRING";
     private static final String ACTION_NONE = "NONE";
     private static final String ACTION_BATCH = "BATCH";
+    private static final String SOURCE_TYPE_RECURRING = "RECURRING";
     private static final int MAX_REVIEW_ACTIONS = 8;
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
@@ -45,6 +51,7 @@ public class AgentService {
     private final ObjectProvider<ChatClient> autoChatClientProvider;
     private final ObjectProvider<ChatClient> reviewChatClientProvider;
     private final CalendarEventService eventService;
+    private final RecurringEventService recurringEventService;
     private final CurrentUserService currentUserService;
     private final AgentConfirmationStore confirmationStore;
     private final ObjectMapper objectMapper;
@@ -57,6 +64,7 @@ public class AgentService {
             @Qualifier("voiceCalendarAutoChatClient") ObjectProvider<ChatClient> autoChatClientProvider,
             @Qualifier("voiceCalendarReviewChatClient") ObjectProvider<ChatClient> reviewChatClientProvider,
             CalendarEventService eventService,
+            RecurringEventService recurringEventService,
             CurrentUserService currentUserService,
             AgentConfirmationStore confirmationStore,
             ObjectMapper objectMapper,
@@ -68,6 +76,7 @@ public class AgentService {
         this.autoChatClientProvider = autoChatClientProvider;
         this.reviewChatClientProvider = reviewChatClientProvider;
         this.eventService = eventService;
+        this.recurringEventService = recurringEventService;
         this.currentUserService = currentUserService;
         this.confirmationStore = confirmationStore;
         this.objectMapper = objectMapper;
@@ -87,12 +96,42 @@ public class AgentService {
 
     public AgentChatResponse confirm(PendingAgentAction action) {
         Long userId = currentUserService.requireCurrentUserId();
-        PendingAgentAction storedAction;
+        AgentConfirmationStore.ConsumedPendingAction consumedAction;
         try {
-            storedAction = confirmationStore.consume(userId, action == null ? null : action.id());
+            consumedAction = confirmationStore.consumeAny(userId, action == null ? null : action.id());
         } catch (IllegalArgumentException exception) {
             return AgentChatResponse.failed(exception.getMessage(), MODE_REVIEW, ACTION_NONE, List.of());
         }
+
+        if (consumedAction.recurringAction() != null) {
+            PendingRecurringAgentAction recurringAction = consumedAction.recurringAction();
+            String recurringActionType = blankToNull(recurringAction.action());
+            if (ACTION_CREATE_RECURRING.equalsIgnoreCase(recurringActionType)) {
+                RecurringEventResponse recurringEvent = createRecurringEvent(userId, recurringAction);
+                return AgentChatResponse.done(
+                        "已添加重复日程：\n" + formatRecurringEvent(recurringEvent),
+                        MODE_REVIEW,
+                        ACTION_CREATE_RECURRING,
+                        null,
+                        List.of()
+                );
+            }
+            if (ACTION_DELETE_RECURRING.equalsIgnoreCase(recurringActionType)) {
+                RecurringEventResponse existing = recurringEventService.getEvent(userId, recurringAction.recurringEventId());
+                recurringEventService.deleteEvent(userId, recurringAction.recurringEventId());
+                return AgentChatResponse.done(
+                        "已删除重复日程：\n" + formatRecurringEvent(existing),
+                        MODE_REVIEW,
+                        ACTION_DELETE_RECURRING,
+                        null,
+                        List.of()
+                );
+            }
+            return AgentChatResponse.failed("该重复日程操作暂不支持确认执行。", MODE_REVIEW, recurringAction.action(), List.of());
+        }
+
+        PendingAgentAction storedAction;
+        storedAction = consumedAction.singleAction();
 
         String normalizedAction = normalizeAction(storedAction.action());
         if (ACTION_CREATE.equals(normalizedAction)) {
@@ -178,6 +217,9 @@ public class AgentService {
         if (isBelowConfidenceThreshold(plan.confidence(), autoConfidenceThreshold)) {
             return AgentChatResponse.failed("识别置信度较低，自动模式已停止执行，请切换审查模式或把日程说得更明确。", mode, ACTION_NONE, List.of());
         }
+        if (actions.stream().anyMatch(this::isRecurringIntent)) {
+            return AgentChatResponse.failed("检测到周期日程。为避免误创建或误删除整条重复规则，请切换审查模式确认后执行。", mode, ACTION_NONE, List.of());
+        }
         boolean hasLowConfidenceAction = actions.stream()
                 .anyMatch(action -> isBelowConfidenceThreshold(effectiveConfidence(plan, action), autoConfidenceThreshold));
         if (hasLowConfidenceAction) {
@@ -231,6 +273,11 @@ public class AgentService {
                         - targetStartTime：修改或删除时，用于定位原日程的原开始时间，格式 HH:mm。
                         - targetStartTimeFrom/targetStartTimeTo：修改或删除时，用于定位原日程开始时间范围，格式 HH:mm。上午=06:00 到 12:00，下午=12:00 到 18:00，晚上=18:00 到 23:59；没有时间段就留空。
                         - newTitle/newDate/newStartTime/newEndTime/newLocation/newDescription/newTag/newReminderTime：修改后的新字段。
+                        - recurring：是否为重复日程。用户说每天、每周、每月、工作日、本周每天、今年每天、每周一三五等周期表达时必须为 true；无论是创建、查询、修改还是删除，只要目标是重复规则或一组重复发生的日程，都必须为 true。
+                        - recurrenceType：重复类型，只能是 DAILY、WEEKLY、MONTHLY。第一版优先输出 DAILY 或 WEEKLY。
+                        - recurrenceStartDate/recurrenceEndDate：重复日程的开始和结束日期，格式 yyyy-MM-dd。不要创建无限重复。
+                        - recurrenceInterval：重复间隔，例如每天为 1，每两天为 2。
+                        - recurrenceDaysOfWeek：每周重复的星期数组，例如 ["MON","WED","FRI"]；只有 WEEKLY 需要。
                         - confidence：0 到 1 的置信度。
                         - reason：一句话说明解析理由。
 
@@ -238,17 +285,22 @@ public class AgentService {
                         1. 用户表达添加日程时用 CREATE；只要有日期、开始时间和日程内容即可创建。
                         2. “今天下午三点开会”的 title 是“开会”，date 用当前日期换算，startTime 是 15:00。
                         3. 创建日程时必须输出 tag。标签示例：开会、评审、讨论、汇报 => 会议；去工位、写代码、项目开发 => 工作；上课、复习、考试 => 学习；吃饭、购物、看病 => 生活；跑步、健身、打球 => 运动；出差、坐车、去机场 => 出行；提醒我、记得、闹钟 => 提醒。
-                        4. 修改时，target 字段描述原日程，new 字段描述要改成的新内容。例如“把今天三点的会改到四点”：targetStartTime=15:00，newStartTime=16:00。
-                        5. 删除时只提取定位条件，不要假装已经删除。不要只依赖固定关键词；用户表达不再执行某个已经安排的动作，或用否定句取消某个日程，本质是 DELETE。
-                        6. 例如“取消今天下午三点的会议”“今天三点的会议不去了”“今天下午不背单词了”“明天不用上课了”都必须解析为 DELETE，不是 UPDATE，也不是 NONE。
-                        7. “今天下午不背单词了”应解析为：action=DELETE，date=当前日期，targetTitleKeyword=背单词，targetStartTimeFrom=12:00，targetStartTimeTo=18:00。
-                        8. 会议、会、开会、例会、讨论、评审、汇报属于会议类关键词；用户说“会议/会”时 targetTitleKeyword 可以填写“会议”。
-                        9. 完全没有日程管理含义时，action=NONE。
-                        10. “然后、还有、再、另外、顺便、以及”通常表示多条指令。
-                        11. 如果一句话中出现多个明确时间点和多个日程内容，通常应拆成多条 CREATE。
-                        12. 如果某一条缺少必要字段，只让这一条保留缺失字段，不要影响其它条。
-                        13. 最多输出 %d 条 action；如果超过，保留最明确的前 %d 条。
-                        14. 必须只输出 JSON 对象，不要输出 Markdown、解释文字或代码块。
+                        4. 周期表达必须输出 recurring=true，不要展开成多条普通 CREATE，也不要把周期删除/修改当成某一天的普通日程。例如“本周每天晚上八点背单词”是一条 DAILY 重复日程，不是 7 条普通日程。
+                        5. “今年每天晚上八点背单词”应解析为：recurring=true，recurrenceType=DAILY，recurrenceStartDate=当前日期，recurrenceEndDate=当年 12-31，startTime=20:00。
+                        6. “每周一三五晚上跑步”应解析为：recurring=true，recurrenceType=WEEKLY，recurrenceDaysOfWeek=["MON","WED","FRI"]。
+                        7. 如果用户说“每天晚上背单词”但没有结束日期，recurrenceEndDate 可以留空，由审查模式后端默认未来 30 天；自动模式会拒绝执行。
+                        8. 修改时，target 字段描述原日程，new 字段描述要改成的新内容。例如“把今天三点的会改到四点”：targetStartTime=15:00，newStartTime=16:00。
+                        9. 删除时只提取定位条件，不要假装已经删除。不要只依赖固定关键词；用户表达不再执行某个已经安排的动作，或用否定句取消某个日程，本质是 DELETE。
+                        10. 例如“取消今天下午三点的会议”“今天三点的会议不去了”“今天下午不背单词了”“明天不用上课了”都必须解析为 DELETE，不是 UPDATE，也不是 NONE。
+                        11. “今天下午不背单词了”应解析为：action=DELETE，date=当前日期，targetTitleKeyword=背单词，targetStartTimeFrom=12:00，targetStartTimeTo=18:00。
+                        12. “删除本周每天背单词”“取消每天背单词”“以后每周一三五不跑步了”应解析为：action=DELETE，recurring=true，targetTitleKeyword=背单词/跑步，并填写能识别出的 recurrenceType、recurrenceStartDate、recurrenceEndDate 或 recurrenceDaysOfWeek；绝不能解析成删除今天的单次日程。
+                        13. 会议、会、开会、例会、讨论、评审、汇报属于会议类关键词；用户说“会议/会”时 targetTitleKeyword 可以填写“会议”。
+                        14. 完全没有日程管理含义时，action=NONE。
+                        15. “然后、还有、再、另外、顺便、以及”通常表示多条指令。
+                        16. 如果一句话中出现多个明确时间点和多个日程内容，且没有周期语义，通常应拆成多条 CREATE。
+                        17. 如果某一条缺少必要字段，只让这一条保留缺失字段，不要影响其它条。
+                        18. 最多输出 %d 条 action；如果超过，保留最明确的前 %d 条。
+                        19. 必须只输出 JSON 对象，不要输出 Markdown、解释文字或代码块。
 
                         输出示例：
                         {
@@ -289,7 +341,7 @@ public class AgentService {
                 ))
                 .call()
                 .content();
-        return readPlan(content);
+        return applyRecurringKeywordGuard(message, readPlan(content));
     }
 
     private CalendarAgentPlan readPlan(String content) throws Exception {
@@ -302,6 +354,129 @@ public class AgentService {
 
         CalendarAgentIntent singleIntent = objectMapper.readValue(json, CalendarAgentIntent.class);
         return new CalendarAgentPlan(List.of(singleIntent), "单条日程指令", singleIntent.confidence());
+    }
+
+    private CalendarAgentPlan applyRecurringKeywordGuard(String message, CalendarAgentPlan plan) {
+        if (!containsRecurringExpression(message) || plan.actions().isEmpty()) {
+            return plan;
+        }
+
+        boolean singleAction = plan.actions().size() == 1;
+        List<CalendarAgentIntent> guardedActions = plan.actions().stream()
+                .map(intent -> shouldForceRecurringIntent(message, intent, singleAction)
+                        ? forceRecurringIntent(message, intent)
+                        : intent)
+                .toList();
+        return new CalendarAgentPlan(guardedActions, plan.summary(), plan.confidence());
+    }
+
+    private boolean shouldForceRecurringIntent(String message, CalendarAgentIntent intent, boolean singleAction) {
+        String action = normalizeAction(intent.action());
+        if (ACTION_NONE.equals(action) || isRecurringIntent(intent)) {
+            return false;
+        }
+        return singleAction
+                || containsRecurringExpression(intent.title())
+                || containsRecurringExpression(intent.targetTitleKeyword())
+                || containsRecurringExpression(intent.reason());
+    }
+
+    private CalendarAgentIntent forceRecurringIntent(String message, CalendarAgentIntent intent) {
+        return new CalendarAgentIntent(
+                intent.action(),
+                intent.title(),
+                intent.date(),
+                intent.startTime(),
+                intent.endTime(),
+                intent.location(),
+                intent.description(),
+                intent.tag(),
+                intent.reminderTime(),
+                intent.targetId(),
+                intent.targetTitleKeyword(),
+                intent.targetStartTime(),
+                intent.targetStartTimeFrom(),
+                intent.targetStartTimeTo(),
+                intent.newTitle(),
+                intent.newDate(),
+                intent.newStartTime(),
+                intent.newEndTime(),
+                intent.newLocation(),
+                intent.newDescription(),
+                intent.newTag(),
+                intent.newReminderTime(),
+                true,
+                firstNonBlankOrNull(intent.recurrenceType(), inferRecurrenceType(message)),
+                intent.recurrenceStartDate(),
+                intent.recurrenceEndDate(),
+                intent.recurrenceInterval(),
+                intent.recurrenceDaysOfWeek() == null || intent.recurrenceDaysOfWeek().isEmpty()
+                        ? inferRecurrenceDaysOfWeek(message)
+                        : intent.recurrenceDaysOfWeek(),
+                intent.confidence(),
+                intent.reason()
+        );
+    }
+
+    private boolean containsRecurringExpression(String value) {
+        if (isBlank(value)) {
+            return false;
+        }
+        String normalized = value.trim();
+        return normalized.contains("每天")
+                || normalized.contains("每日")
+                || normalized.contains("每晚")
+                || normalized.contains("每早")
+                || normalized.contains("每周")
+                || normalized.contains("每星期")
+                || normalized.contains("每礼拜")
+                || normalized.contains("每月")
+                || normalized.contains("工作日")
+                || normalized.contains("本周每天")
+                || normalized.contains("这周每天")
+                || normalized.contains("今年每天")
+                || normalized.contains("以后每天");
+    }
+
+    private String inferRecurrenceType(String value) {
+        if (isBlank(value)) {
+            return "DAILY";
+        }
+        if (value.contains("每月")) {
+            return "MONTHLY";
+        }
+        if (value.contains("每周") || value.contains("每星期") || value.contains("每礼拜") || value.contains("工作日")) {
+            return "WEEKLY";
+        }
+        return "DAILY";
+    }
+
+    private List<String> inferRecurrenceDaysOfWeek(String value) {
+        if (isBlank(value)) {
+            return List.of();
+        }
+        if (value.contains("工作日")) {
+            return List.of("MON", "TUE", "WED", "THU", "FRI");
+        }
+        List<String> days = new ArrayList<>();
+        appendDayIfMentioned(days, value, "一", "MON");
+        appendDayIfMentioned(days, value, "二", "TUE");
+        appendDayIfMentioned(days, value, "三", "WED");
+        appendDayIfMentioned(days, value, "四", "THU");
+        appendDayIfMentioned(days, value, "五", "FRI");
+        appendDayIfMentioned(days, value, "六", "SAT");
+        if (value.contains("周日") || value.contains("周天") || value.contains("星期日") || value.contains("星期天") || value.contains("礼拜日") || value.contains("礼拜天")) {
+            days.add("SUN");
+        }
+        return days;
+    }
+
+    private void appendDayIfMentioned(List<String> days, String value, String chineseDay, String normalizedDay) {
+        if (value.contains("周" + chineseDay)
+                || value.contains("星期" + chineseDay)
+                || value.contains("礼拜" + chineseDay)) {
+            days.add(normalizedDay);
+        }
     }
 
     private AgentChatResponse executeReviewedPlan(CalendarAgentPlan plan, String mode) {
@@ -341,6 +516,7 @@ public class AgentService {
                     "识别置信度较低，请确认语音文本是否准确后重试。",
                     null,
                     List.of(),
+                    null,
                     null
             );
         }
@@ -368,6 +544,7 @@ public class AgentService {
                     "日程操作失败：" + exception.getMessage(),
                     null,
                     List.of(),
+                    null,
                     null
             );
         }
@@ -382,6 +559,10 @@ public class AgentService {
     }
 
     private AgentChatResponse prepareCreate(Long userId, CalendarAgentIntent intent, String mode) {
+        if (isRecurringIntent(intent)) {
+            return prepareRecurringCreate(userId, intent);
+        }
+
         if (isBlank(intent.title()) || isBlank(intent.date()) || isBlank(intent.startTime())) {
             return AgentChatResponse.failed("缺少创建日程所需的标题、日期或开始时间，请再说得具体一点。", mode, ACTION_CREATE, List.of());
         }
@@ -404,6 +585,51 @@ public class AgentService {
                 "将添加这个日程，请确认：\n" + formatPendingEvent(pendingAction) + "\n确认操作会自动过期，请尽快确认。",
                 ACTION_CREATE,
                 List.of(),
+                pendingAction
+        );
+    }
+
+    private AgentChatResponse prepareRecurringCreate(Long userId, CalendarAgentIntent intent) {
+        if (isBlank(intent.title()) || isBlank(intent.startTime())) {
+            return AgentChatResponse.failed("缺少创建重复日程所需的标题或开始时间，请再说得具体一点。", MODE_REVIEW, ACTION_CREATE_RECURRING, List.of());
+        }
+
+        String startDate = firstNonBlankOrNull(intent.recurrenceStartDate(), intent.date());
+        if (isBlank(startDate)) {
+            startDate = LocalDate.now(agentZoneId).toString();
+        }
+        String endDate = blankToNull(intent.recurrenceEndDate());
+        boolean usedDefaultEndDate = false;
+        if (endDate == null) {
+            endDate = LocalDate.parse(startDate).plusDays(29).toString();
+            usedDefaultEndDate = true;
+        }
+
+        String recurrenceType = firstNonBlankOrNull(intent.recurrenceType(), "DAILY");
+        Integer intervalValue = intent.recurrenceInterval() == null ? 1 : intent.recurrenceInterval();
+        PendingRecurringAgentAction pendingAction = confirmationStore.saveRecurring(userId, new PendingRecurringAgentAction(
+                null,
+                null,
+                ACTION_CREATE_RECURRING,
+                null,
+                intent.title().trim(),
+                startDate,
+                endDate,
+                intent.startTime(),
+                blankToNull(intent.endTime()),
+                recurrenceType,
+                intervalValue,
+                normalizeRecurrenceDaysOfWeek(intent.recurrenceDaysOfWeek()),
+                blankToNull(intent.location()),
+                blankToNull(intent.description()),
+                blankToNull(intent.tag()),
+                blankToNull(intent.reminderTime())
+        ));
+
+        String defaultText = usedDefaultEndDate ? "\n未指定结束日期，系统默认创建未来 30 天。" : "";
+        return AgentChatResponse.recurringConfirmation(
+                "将添加重复日程，请确认：\n" + formatPendingRecurringEvent(pendingAction) + defaultText + "\n确认操作会自动过期，请尽快确认。",
+                ACTION_CREATE_RECURRING,
                 pendingAction
         );
     }
@@ -443,6 +669,23 @@ public class AgentService {
         ));
     }
 
+    private RecurringEventResponse createRecurringEvent(Long userId, PendingRecurringAgentAction action) {
+        return recurringEventService.createEvent(userId, new RecurringEventRequest(
+                action.title(),
+                LocalDate.parse(action.startDate()),
+                LocalDate.parse(action.endDate()),
+                LocalTime.parse(action.startTime()),
+                isBlank(action.endTime()) ? null : LocalTime.parse(action.endTime()),
+                action.recurrenceType(),
+                action.intervalValue(),
+                action.daysOfWeek().isEmpty() ? null : String.join(",", action.daysOfWeek()),
+                action.location(),
+                action.description(),
+                action.tag(),
+                isBlank(action.reminderTime()) ? null : LocalTime.parse(action.reminderTime())
+        ));
+    }
+
     private AgentChatResponse queryEvents(Long userId, String dateText, String mode) {
         LocalDate date = isBlank(dateText) ? null : LocalDate.parse(dateText);
         List<CalendarEvent> events = eventService.findEvents(userId, date);
@@ -456,6 +699,9 @@ public class AgentService {
     }
 
     private AgentChatResponse prepareUpdate(Long userId, CalendarAgentIntent intent, String mode) {
+        if (isRecurringIntent(intent)) {
+            return AgentChatResponse.failed("识别到重复日程修改意图。当前暂不支持通过 Agent 修改整条重复规则，请先手动处理，或删除后重新创建。", mode, ACTION_UPDATE, List.of());
+        }
         if (!hasAnyUpdateField(intent)) {
             return AgentChatResponse.failed("没有识别到要修改成什么内容，请说出新的时间、标题或地点。", mode, ACTION_UPDATE, List.of());
         }
@@ -463,8 +709,12 @@ public class AgentService {
             return AgentChatResponse.failed(UNCLEAR_TARGET_MESSAGE, mode, ACTION_UPDATE, List.of());
         }
 
-        List<CalendarEvent> candidates = findCandidates(userId, intent);
+        List<CalendarEvent> allCandidates = findCandidates(userId, intent);
+        List<CalendarEvent> candidates = singleEventCandidates(allCandidates);
         if (candidates.isEmpty()) {
+            if (hasRecurringEventInstance(allCandidates)) {
+                return AgentChatResponse.failed("找到的是重复日程实例，不能按普通单次日程修改。当前暂不支持修改重复规则，请先手动处理，或删除后重新创建。", mode, ACTION_UPDATE, List.of());
+            }
             return AgentChatResponse.failed("没有找到符合条件的日程，无法修改。", mode, ACTION_UPDATE, List.of());
         }
         if (candidates.size() > 1) {
@@ -500,12 +750,20 @@ public class AgentService {
     }
 
     private AgentChatResponse prepareDelete(Long userId, CalendarAgentIntent intent, String mode) {
+        if (isRecurringIntent(intent)) {
+            return prepareRecurringDelete(userId, intent, mode);
+        }
+
         if (!hasAnyTargetLocator(intent)) {
             return AgentChatResponse.failed(UNCLEAR_TARGET_MESSAGE, mode, ACTION_DELETE, List.of());
         }
 
-        List<CalendarEvent> candidates = findCandidates(userId, intent);
+        List<CalendarEvent> allCandidates = findCandidates(userId, intent);
+        List<CalendarEvent> candidates = singleEventCandidates(allCandidates);
         if (candidates.isEmpty()) {
+            if (hasRecurringEventInstance(allCandidates)) {
+                return AgentChatResponse.failed("找到的是重复日程实例，不能按普通单次日程删除。请明确说明要删除整条重复规则，例如“删除每天背单词这个重复日程”。", mode, ACTION_DELETE, List.of());
+            }
             return AgentChatResponse.failed("没有找到符合条件的日程，无法删除。", mode, ACTION_DELETE, List.of());
         }
         if (candidates.size() > 1) {
@@ -536,6 +794,46 @@ public class AgentService {
                 "将删除这个日程，请确认：\n" + formatEvent(target) + "\n确认操作会自动过期，请尽快确认。",
                 ACTION_DELETE,
                 candidates,
+                pendingAction
+        );
+    }
+
+    private AgentChatResponse prepareRecurringDelete(Long userId, CalendarAgentIntent intent, String mode) {
+        if (!hasAnyRecurringTargetLocator(intent)) {
+            return AgentChatResponse.failed("无法确定要删除哪条重复日程规则，请提供标题、重复频率或时间范围后重试。", mode, ACTION_DELETE_RECURRING, List.of());
+        }
+
+        List<RecurringEventResponse> candidates = findRecurringCandidates(userId, intent);
+        if (candidates.isEmpty()) {
+            return AgentChatResponse.failed("没有找到符合条件的重复日程规则，无法删除。", mode, ACTION_DELETE_RECURRING, List.of());
+        }
+        if (candidates.size() > 1) {
+            return AgentChatResponse.failed("找到多条符合条件的重复日程规则，请补充标题、时间或频率后再删除。", mode, ACTION_DELETE_RECURRING, List.of());
+        }
+
+        RecurringEventResponse target = candidates.getFirst();
+        PendingRecurringAgentAction pendingAction = confirmationStore.saveRecurring(userId, new PendingRecurringAgentAction(
+                null,
+                null,
+                ACTION_DELETE_RECURRING,
+                target.id(),
+                target.title(),
+                target.startDate().toString(),
+                target.endDate().toString(),
+                target.startTime().toString(),
+                target.endTime() == null ? null : target.endTime().toString(),
+                target.recurrenceType(),
+                target.intervalValue(),
+                parseDaysList(target.daysOfWeek()),
+                target.location(),
+                target.description(),
+                target.tag(),
+                target.reminderTime() == null ? null : target.reminderTime().toString()
+        ));
+
+        return AgentChatResponse.recurringConfirmation(
+                "将删除整条重复日程规则，请确认：\n" + formatPendingRecurringEvent(pendingAction) + "\n确认后该规则下的所有未来展示实例都会消失。确认操作会自动过期，请尽快确认。",
+                ACTION_DELETE_RECURRING,
                 pendingAction
         );
     }
@@ -591,6 +889,91 @@ public class AgentService {
                 .filter(event -> matchesExactStartTime(event, targetStartTime))
                 .filter(event -> matchesStartTimeRange(event, targetStartTimeFrom, targetStartTimeTo))
                 .toList();
+    }
+
+    private List<RecurringEventResponse> findRecurringCandidates(Long userId, CalendarAgentIntent intent) {
+        String keyword = firstNonBlankOrNull(intent.targetTitleKeyword(), intent.title());
+        String recurrenceType = blankToNull(intent.recurrenceType());
+        String targetStartTime = firstNonBlankOrNull(intent.targetStartTime(), intent.startTime());
+        LocalDate rangeStart = parseOptionalDate(firstNonBlankOrNull(intent.recurrenceStartDate(), intent.date()));
+        LocalDate rangeEnd = parseOptionalDate(intent.recurrenceEndDate());
+        List<String> daysOfWeek = normalizeRecurrenceDaysOfWeek(intent.recurrenceDaysOfWeek());
+
+        return recurringEventService.findEvents(userId).stream()
+                .filter(event -> matchesRecurringKeyword(event, keyword))
+                .filter(event -> matchesRecurringType(event, recurrenceType))
+                .filter(event -> matchesRecurringDateRange(event, rangeStart, rangeEnd))
+                .filter(event -> matchesRecurringStartTime(event, targetStartTime))
+                .filter(event -> matchesRecurringDaysOfWeek(event, daysOfWeek))
+                .toList();
+    }
+
+    private boolean hasAnyRecurringTargetLocator(CalendarAgentIntent intent) {
+        return !isBlank(intent.targetTitleKeyword())
+                || !isBlank(intent.title())
+                || !isBlank(intent.date())
+                || !isBlank(intent.startTime())
+                || !isBlank(intent.targetStartTime())
+                || !isBlank(intent.recurrenceType())
+                || !isBlank(intent.recurrenceStartDate())
+                || !isBlank(intent.recurrenceEndDate())
+                || (intent.recurrenceDaysOfWeek() != null && !intent.recurrenceDaysOfWeek().isEmpty());
+    }
+
+    private List<CalendarEvent> singleEventCandidates(List<CalendarEvent> candidates) {
+        return candidates.stream()
+                .filter(event -> !isRecurringEventInstance(event))
+                .toList();
+    }
+
+    private boolean hasRecurringEventInstance(List<CalendarEvent> candidates) {
+        return candidates.stream().anyMatch(this::isRecurringEventInstance);
+    }
+
+    private boolean isRecurringEventInstance(CalendarEvent event) {
+        return SOURCE_TYPE_RECURRING.equalsIgnoreCase(blankToNull(event.sourceType()))
+                || (event.id() == null && event.recurringEventId() != null);
+    }
+
+    private boolean matchesRecurringKeyword(RecurringEventResponse event, String keyword) {
+        if (isBlank(keyword)) {
+            return true;
+        }
+        return containsIgnoreCase(event.title(), keyword)
+                || containsIgnoreCase(event.location(), keyword)
+                || containsIgnoreCase(event.description(), keyword)
+                || containsIgnoreCase(event.tag(), keyword);
+    }
+
+    private boolean matchesRecurringType(RecurringEventResponse event, String recurrenceType) {
+        return isBlank(recurrenceType) || recurrenceType.equalsIgnoreCase(event.recurrenceType());
+    }
+
+    private boolean matchesRecurringDateRange(RecurringEventResponse event, LocalDate rangeStart, LocalDate rangeEnd) {
+        if (rangeStart != null && event.endDate().isBefore(rangeStart)) {
+            return false;
+        }
+        return rangeEnd == null || !event.startDate().isAfter(rangeEnd);
+    }
+
+    private boolean matchesRecurringStartTime(RecurringEventResponse event, String targetStartTime) {
+        return isBlank(targetStartTime) || event.startTime().equals(LocalTime.parse(targetStartTime));
+    }
+
+    private boolean matchesRecurringDaysOfWeek(RecurringEventResponse event, List<String> targetDaysOfWeek) {
+        if (targetDaysOfWeek == null || targetDaysOfWeek.isEmpty()) {
+            return true;
+        }
+        List<String> eventDaysOfWeek = parseDaysList(event.daysOfWeek()).stream()
+                .map(day -> day.toUpperCase(Locale.ROOT))
+                .toList();
+        return eventDaysOfWeek.containsAll(targetDaysOfWeek.stream()
+                .map(day -> day.toUpperCase(Locale.ROOT))
+                .toList());
+    }
+
+    private LocalDate parseOptionalDate(String date) {
+        return isBlank(date) ? null : LocalDate.parse(date);
     }
 
     private boolean matchesExactStartTime(CalendarEvent event, String targetStartTime) {
@@ -705,6 +1088,55 @@ public class AgentService {
         appendField(builder, "提醒", formatPendingDateTime(action.date(), action.reminderTime()));
         appendField(builder, "备注", action.description());
         return builder.toString();
+    }
+
+    private String formatPendingRecurringEvent(PendingRecurringAgentAction action) {
+        StringBuilder builder = new StringBuilder();
+        appendField(builder, "标题", action.title());
+        appendField(builder, "频率", formatRecurrence(action.recurrenceType(), action.intervalValue(), action.daysOfWeek()));
+        appendField(builder, "范围", action.startDate() + " 至 " + action.endDate());
+        appendField(builder, "时间", formatTimeRange(action.startTime(), action.endTime()));
+        appendField(builder, "地点", action.location());
+        appendField(builder, "标签", action.tag());
+        appendField(builder, "提醒", action.reminderTime());
+        appendField(builder, "备注", action.description());
+        return builder.toString();
+    }
+
+    private String formatRecurringEvent(RecurringEventResponse event) {
+        StringBuilder builder = new StringBuilder();
+        appendField(builder, "标题", event.title());
+        appendField(builder, "频率", formatRecurrence(event.recurrenceType(), event.intervalValue(), parseDaysList(event.daysOfWeek())));
+        appendField(builder, "范围", event.startDate() + " 至 " + event.endDate());
+        appendField(builder, "时间", formatTimeRange(
+                event.startTime() == null ? null : event.startTime().toString(),
+                event.endTime() == null ? null : event.endTime().toString()
+        ));
+        appendField(builder, "地点", event.location());
+        appendField(builder, "标签", event.tag());
+        appendField(builder, "提醒", event.reminderTime() == null ? null : event.reminderTime().toString());
+        appendField(builder, "备注", event.description());
+        return builder.toString();
+    }
+
+    private String formatRecurrence(String recurrenceType, Integer intervalValue, List<String> daysOfWeek) {
+        String type = blankToNull(recurrenceType);
+        int interval = intervalValue == null ? 1 : intervalValue;
+        if ("WEEKLY".equalsIgnoreCase(type)) {
+            String days = daysOfWeek == null || daysOfWeek.isEmpty() ? "" : "（" + String.join("、", daysOfWeek) + "）";
+            return interval == 1 ? "每周" + days : "每 " + interval + " 周" + days;
+        }
+        if ("MONTHLY".equalsIgnoreCase(type)) {
+            return interval == 1 ? "每月" : "每 " + interval + " 月";
+        }
+        return interval == 1 ? "每天" : "每 " + interval + " 天";
+    }
+
+    private String formatTimeRange(String startTime, String endTime) {
+        if (isBlank(startTime)) {
+            return null;
+        }
+        return isBlank(endTime) ? startTime.trim() : startTime.trim() + "-" + endTime.trim();
     }
 
     private String formatPendingQuery(PendingAgentAction action) {
@@ -834,6 +1266,33 @@ public class AgentService {
 
     private boolean isBelowConfidenceThreshold(Double confidence, double threshold) {
         return confidence == null || confidence < threshold;
+    }
+
+    private boolean isRecurringIntent(CalendarAgentIntent intent) {
+        return Boolean.TRUE.equals(intent.recurring())
+                || !isBlank(intent.recurrenceType())
+                || !isBlank(intent.recurrenceStartDate())
+                || !isBlank(intent.recurrenceEndDate())
+                || intent.recurrenceInterval() != null
+                || (intent.recurrenceDaysOfWeek() != null && !intent.recurrenceDaysOfWeek().isEmpty());
+    }
+
+    private List<String> normalizeRecurrenceDaysOfWeek(List<String> daysOfWeek) {
+        if (daysOfWeek == null) {
+            return List.of();
+        }
+        return daysOfWeek.stream()
+                .filter(day -> !isBlank(day))
+                .map(String::trim)
+                .toList();
+    }
+
+    private List<String> parseDaysList(String value) {
+        String normalized = blankToNull(value);
+        if (normalized == null) {
+            return List.of();
+        }
+        return List.of(normalized.split(","));
     }
 
     private boolean isForbiddenAutoModeReply(String content) {

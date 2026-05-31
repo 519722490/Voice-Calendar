@@ -10,7 +10,8 @@ public record AgentActionResult(
         String message,
         CalendarEvent event,
         List<CalendarEvent> candidates,
-        PendingAgentAction pendingAction
+        PendingAgentAction pendingAction,
+        PendingRecurringAgentAction pendingRecurringAction
 ) {
     public AgentActionResult {
         candidates = candidates == null ? List.of() : List.copyOf(candidates);
@@ -25,7 +26,8 @@ public record AgentActionResult(
                 response.content(),
                 response.event(),
                 response.candidates(),
-                response.pendingAction()
+                response.pendingAction(),
+                response.pendingRecurringAction()
         );
     }
 }

@@ -12,6 +12,7 @@ public record AgentChatResponse(
         CalendarEvent event,
         List<CalendarEvent> candidates,
         PendingAgentAction pendingAction,
+        PendingRecurringAgentAction pendingRecurringAction,
         boolean batch,
         List<AgentActionResult> results
 ) {
@@ -21,7 +22,7 @@ public record AgentChatResponse(
     }
 
     public AgentChatResponse(String content, boolean aiEnabled) {
-        this(content, aiEnabled, aiEnabled, "auto", "NONE", false, null, List.of(), null, false, List.of());
+        this(content, aiEnabled, aiEnabled, "auto", "NONE", false, null, List.of(), null, null, false, List.of());
     }
 
     public static AgentChatResponse disabled(String mode) {
@@ -35,6 +36,7 @@ public record AgentChatResponse(
                 null,
                 List.of(),
                 null,
+                null,
                 false,
                 List.of()
         );
@@ -47,11 +49,11 @@ public record AgentChatResponse(
             CalendarEvent event,
             List<CalendarEvent> candidates
     ) {
-        return new AgentChatResponse(content, true, true, mode, action, false, event, candidates, null, false, List.of());
+        return new AgentChatResponse(content, true, true, mode, action, false, event, candidates, null, null, false, List.of());
     }
 
     public static AgentChatResponse failed(String content, String mode, String action, List<CalendarEvent> candidates) {
-        return new AgentChatResponse(content, true, false, mode, action, false, null, candidates, null, false, List.of());
+        return new AgentChatResponse(content, true, false, mode, action, false, null, candidates, null, null, false, List.of());
     }
 
     public static AgentChatResponse confirmation(
@@ -60,7 +62,15 @@ public record AgentChatResponse(
             List<CalendarEvent> candidates,
             PendingAgentAction pendingAction
     ) {
-        return new AgentChatResponse(content, true, false, "review", action, true, null, candidates, pendingAction, false, List.of());
+        return new AgentChatResponse(content, true, false, "review", action, true, null, candidates, pendingAction, null, false, List.of());
+    }
+
+    public static AgentChatResponse recurringConfirmation(
+            String content,
+            String action,
+            PendingRecurringAgentAction pendingRecurringAction
+    ) {
+        return new AgentChatResponse(content, true, false, "review", action, true, null, List.of(), null, pendingRecurringAction, false, List.of());
     }
 
     public static AgentChatResponse batch(String content, String mode, String action, boolean success, List<AgentActionResult> results) {
@@ -72,7 +82,12 @@ public record AgentChatResponse(
                 .filter(actionItem -> actionItem != null)
                 .findFirst()
                 .orElse(null);
-        boolean needsConfirmation = pendingAction != null;
+        PendingRecurringAgentAction pendingRecurringAction = batchResults.stream()
+                .map(AgentActionResult::pendingRecurringAction)
+                .filter(actionItem -> actionItem != null)
+                .findFirst()
+                .orElse(null);
+        boolean needsConfirmation = pendingAction != null || pendingRecurringAction != null;
 
         return new AgentChatResponse(
                 content,
@@ -84,6 +99,7 @@ public record AgentChatResponse(
                 event,
                 candidates,
                 pendingAction,
+                pendingRecurringAction,
                 batchResults.size() > 1,
                 batchResults
         );

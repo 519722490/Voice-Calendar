@@ -155,6 +155,52 @@ class CalendarEventControllerTests {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void shouldReturnRecurringInstancesWithoutExpandingSingleEvents() throws Exception {
+        String token = TestAuthHelper.registerUser(mockMvc, objectMapper, "recurring_user").token();
+
+        String recurringJson = mockMvc.perform(post("/api/recurring-events")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "背单词",
+                                  "startDate": "2030-05-01",
+                                  "endDate": "2030-05-03",
+                                  "startTime": "20:00",
+                                  "recurrenceType": "DAILY",
+                                  "intervalValue": 1,
+                                  "tag": "学习"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.id").isNumber())
+                .andExpect(jsonPath("$.title").value("背单词"))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+
+        Long recurringId = JsonTestHelper.extractId(recurringJson);
+
+        mockMvc.perform(get("/api/events")
+                        .header("Authorization", "Bearer " + token)
+                        .param("from", "2030-05-01")
+                        .param("to", "2030-05-03"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(3)))
+                .andExpect(jsonPath("$[0].id").doesNotExist())
+                .andExpect(jsonPath("$[0].sourceType").value("RECURRING"))
+                .andExpect(jsonPath("$[0].recurringEventId").value(recurringId))
+                .andExpect(jsonPath("$[0].startTime").value("2030-05-01T20:00:00"))
+                .andExpect(jsonPath("$[1].startTime").value("2030-05-02T20:00:00"))
+                .andExpect(jsonPath("$[2].startTime").value("2030-05-03T20:00:00"));
+
+        mockMvc.perform(get("/api/recurring-events")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)));
+    }
+
     static class JsonTestHelper {
         private JsonTestHelper() {
         }
