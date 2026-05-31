@@ -166,6 +166,59 @@ class AgentControllerTests {
     }
 
     @Test
+    void shouldRejectPendingUpdateAction() throws Exception {
+        TestAuthHelper.TestUser user = TestAuthHelper.registerUser(mockMvc, objectMapper, "ag_update_disabled");
+        String createdJson = mockMvc.perform(post("/api/events")
+                        .header("Authorization", "Bearer " + user.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "原会议",
+                                  "startTime": "2030-04-07T10:00:00"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        Long eventId = objectMapper.readTree(createdJson).get("id").asLong();
+        Long userId = userRepository.findByUsername(user.username()).orElseThrow().getId();
+        PendingAgentAction pendingAction = confirmationStore.save(userId, new PendingAgentAction(
+                null,
+                null,
+                "UPDATE",
+                eventId,
+                "新会议",
+                "2030-04-07",
+                "11:00",
+                null,
+                null,
+                null,
+                "会议",
+                null
+        ));
+
+        mockMvc.perform(post("/api/agent/confirm")
+                        .header("Authorization", "Bearer " + user.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "id": "%s"
+                                }
+                                """.formatted(pendingAction.id())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.action").value("UPDATE"))
+                .andExpect(jsonPath("$.content").value(containsString("暂不支持修改日程")));
+
+        mockMvc.perform(get("/api/events/" + eventId)
+                        .header("Authorization", "Bearer " + user.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("原会议"))
+                .andExpect(jsonPath("$.startTime").value("2030-04-07T10:00:00"));
+    }
+
+    @Test
     void shouldCancelPendingAction() throws Exception {
         TestAuthHelper.TestUser user = TestAuthHelper.registerUser(mockMvc, objectMapper, "ag_cancel");
         Long userId = userRepository.findByUsername(user.username()).orElseThrow().getId();

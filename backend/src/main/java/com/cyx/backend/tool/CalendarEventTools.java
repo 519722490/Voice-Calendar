@@ -102,42 +102,6 @@ public class CalendarEventTools {
         return eventService.getEvent(currentUserService.requireCurrentUserId(), id);
     }
 
-    @Tool(description = "修改已有日程。只有在用户提供的标题、日期、时间等信息能唯一定位目标日程，或系统内部已有明确 id 时才调用；用户只说“刚刚的、最近的、上一个、它、那个”等模糊引用时不要调用。未传的字段会保留原值。date 必须是 yyyy-MM-dd，时间必须是 HH:mm。回复用户时不要展示 id。")
-    public CalendarToolResult updateCalendarEvent(
-            @ToolParam(description = "要修改的日程 id") Long id,
-            @ToolParam(description = "新标题，可选", required = false) String title,
-            @ToolParam(description = "新日期，格式 yyyy-MM-dd，可选", required = false) String date,
-            @ToolParam(description = "新开始时间，格式 HH:mm，可选", required = false) String startTime,
-            @ToolParam(description = "新结束时间，格式 HH:mm，可选", required = false) String endTime,
-            @ToolParam(description = "新地点，可选", required = false) String location,
-            @ToolParam(description = "新备注，可选", required = false) String description,
-            @ToolParam(description = "新标签，可选，必须从固定值中选择：会议、工作、学习、生活、运动、出行、提醒、其他；识别不出来用“其他”。", required = false) String tag,
-            @ToolParam(description = "新提醒时间，格式 HH:mm，可选", required = false) String reminderTime
-    ) {
-        Long userId = currentUserService.requireCurrentUserId();
-        CalendarEvent existing = eventService.getEvent(userId, id);
-        LocalDate resolvedDate = isBlank(date) ? existing.startTime().toLocalDate() : LocalDate.parse(date);
-        String resolvedStartTime = isBlank(startTime) ? existing.startTime().toLocalTime().toString() : startTime;
-        String resolvedEndTime = isBlank(endTime)
-                ? existing.endTime() == null ? null : existing.endTime().toLocalTime().toString()
-                : endTime;
-        String resolvedReminderTime = isBlank(reminderTime)
-                ? existing.reminderTime() == null ? null : existing.reminderTime().toLocalTime().toString()
-                : reminderTime;
-
-        CalendarEvent updated = eventService.updateEvent(userId, id, toRequest(
-                isBlank(title) ? existing.title() : title,
-                resolvedDate.toString(),
-                resolvedStartTime,
-                resolvedEndTime,
-                isBlank(location) ? existing.location() : location,
-                isBlank(description) ? existing.description() : description,
-                isBlank(tag) ? existing.tag() : tag,
-                resolvedReminderTime
-        ));
-        return CalendarToolResult.success("日程修改成功", updated);
-    }
-
     @Tool(description = "删除或取消指定 id 的单次日程。用户说删除、取消、撤销、删掉、移除、不去了、不参加、作废、不再、不用、不 + 日程内容 + 了都表示删除意图，例如“今天下午不背单词了”。只有在用户提供的标题、日期、时间等信息能唯一定位目标单次日程，或系统内部已有明确 id 时才调用；用户说每天、每周、每月、工作日、本周每天、今年每天、每周一三五等周期表达时不要调用本工具，也不要把周期删除当成今天的单次删除；用户只说“刚刚的、最近的、上一个、它、那个”等模糊引用时不要调用。回复用户时不要展示 id。")
     public CalendarToolResult deleteCalendarEvent(
             @ToolParam(description = "要删除的日程 id") Long id
