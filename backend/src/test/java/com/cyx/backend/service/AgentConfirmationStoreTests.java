@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.cyx.backend.dto.PendingAgentAction;
+import com.cyx.backend.dto.PendingRecurringAgentAction;
 import java.time.Duration;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class AgentConfirmationStoreTests {
@@ -30,6 +32,19 @@ class AgentConfirmationStoreTests {
                 .hasMessageContaining("已过期");
     }
 
+    @Test
+    void shouldConsumePendingRecurringActionBeforeExpiration() {
+        AgentConfirmationStore store = new AgentConfirmationStore(Duration.ofMinutes(2));
+        PendingRecurringAgentAction saved = store.saveRecurring(1L, recurringAction());
+
+        AgentConfirmationStore.ConsumedPendingAction consumed = store.consumeAny(1L, saved.id());
+
+        assertThat(consumed.singleAction()).isNull();
+        assertThat(consumed.recurringAction()).isNotNull();
+        assertThat(consumed.recurringAction().title()).isEqualTo("背单词");
+        assertThat(consumed.recurringAction().expiresAt()).isNotNull();
+    }
+
     private PendingAgentAction deleteAction(Long eventId) {
         return new PendingAgentAction(
                 null,
@@ -43,6 +58,27 @@ class AgentConfirmationStoreTests {
                 null,
                 null,
                 null,
+                null
+        );
+    }
+
+    private PendingRecurringAgentAction recurringAction() {
+        return new PendingRecurringAgentAction(
+                null,
+                null,
+                "CREATE_RECURRING",
+                null,
+                "背单词",
+                "2030-06-01",
+                "2030-06-03",
+                "20:00",
+                null,
+                "DAILY",
+                1,
+                List.of(),
+                null,
+                null,
+                "学习",
                 null
         );
     }

@@ -35,8 +35,17 @@ public class CalendarEventController {
     public List<CalendarEvent> findEvents(
             @RequestParam(required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
-            LocalDate date
+            LocalDate date,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate from,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
+            LocalDate to
     ) {
+        if (from != null || to != null) {
+            return eventService.findEvents(currentUserService.requireCurrentUserId(), from, to);
+        }
         return eventService.findEvents(currentUserService.requireCurrentUserId(), date);
     }
 

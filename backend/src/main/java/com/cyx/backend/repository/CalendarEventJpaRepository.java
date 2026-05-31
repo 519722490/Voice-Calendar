@@ -42,4 +42,26 @@ public interface CalendarEventJpaRepository extends JpaRepository<CalendarEventE
             @Param("dayStart") LocalDateTime dayStart,
             @Param("nextDayStart") LocalDateTime nextDayStart
     );
+
+    @Query("""
+            select event from CalendarEventEntity event
+            where event.userId = :userId
+            and (
+                (
+                    event.endTime is null
+                    and event.startTime >= :rangeStart
+                    and event.startTime < :rangeEndExclusive
+                ) or (
+                    event.endTime is not null
+                    and event.startTime < :rangeEndExclusive
+                    and event.endTime >= :rangeStart
+                )
+            )
+            order by event.startTime asc
+            """)
+    List<CalendarEventEntity> findEventsInRange(
+            @Param("userId") Long userId,
+            @Param("rangeStart") LocalDateTime rangeStart,
+            @Param("rangeEndExclusive") LocalDateTime rangeEndExclusive
+    );
 }

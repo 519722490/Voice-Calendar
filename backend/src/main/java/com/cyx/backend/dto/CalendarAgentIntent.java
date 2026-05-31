@@ -1,6 +1,7 @@
 package com.cyx.backend.dto;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import java.util.List;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record CalendarAgentIntent(
@@ -26,6 +27,12 @@ public record CalendarAgentIntent(
         String newDescription,
         String newTag,
         String newReminderTime,
+        Boolean recurring,
+        String recurrenceType,
+        String recurrenceStartDate,
+        String recurrenceEndDate,
+        Integer recurrenceInterval,
+        List<String> recurrenceDaysOfWeek,
         Double confidence,
         String reason
 ) {

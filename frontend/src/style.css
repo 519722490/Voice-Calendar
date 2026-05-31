@@ -430,9 +430,28 @@ h3 {
   white-space: nowrap;
 }
 
+.agenda-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.recurring-tag {
+  background: #e6f4ef;
+  color: #15705c;
+}
+
 .agenda-actions {
   display: flex;
   gap: 8px;
+}
+
+.agenda-action-note {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .agenda-actions button {
