@@ -304,13 +304,16 @@ public class AgentService {
                         10. 例如“取消今天下午三点的会议”“今天三点的会议不去了”“今天下午不背单词了”“明天不用上课了”都必须解析为 DELETE，不是 UPDATE，也不是 NONE。
                         11. “今天下午不背单词了”应解析为：action=DELETE，date=当前日期，targetTitleKeyword=背单词，targetStartTimeFrom=12:00，targetStartTimeTo=18:00。
                         12. “删除本周每天背单词”“取消每天背单词”“以后每周一三五不跑步了”应解析为：action=DELETE，recurring=true，targetTitleKeyword=背单词/跑步，并填写能识别出的 recurrenceType、recurrenceStartDate、recurrenceEndDate 或 recurrenceDaysOfWeek；绝不能解析成删除今天的单次日程。
-                        13. 会议、会、开会、例会、讨论、评审、汇报属于会议类关键词；用户说“会议/会”时 targetTitleKeyword 可以填写“会议”。
-                        14. 完全没有日程管理含义时，action=NONE。
-                        15. “然后、还有、再、另外、顺便、以及”通常表示多条指令。
-                        16. 如果一句话中出现多个明确时间点和多个日程内容，且没有周期语义，通常应拆成多条 CREATE。
-                        17. 如果某一条缺少必要字段，只让这一条保留缺失字段，不要影响其它条。
-                        18. 最多输出 %d 条 action；如果超过，保留最明确的前 %d 条。
-                        19. 必须只输出 JSON 对象，不要输出 Markdown、解释文字或代码块。
+                        13. 审查模式不使用对话记忆。“刚刚的日程、刚才那个、上一个、最近的、最新的、它、那个、这条、这个、刚添加的、刚创建的”等上下文指代都不能根据创建顺序、数据库最近记录或上一次操作推断目标。
+                        14. 修改或删除中出现上下文指代时，只有同时存在明确日期、具体时间或时间段、可区分的标题关键词，才允许填写 target 字段；否则 action 仍可解析为 UPDATE/DELETE，但 targetId、targetTitleKeyword、targetStartTime、targetStartTimeFrom、targetStartTimeTo 必须留空，confidence 不高于 0.3。
+                        15. 不要把“会议、日程、事情、安排、活动”这类泛化词单独当成上下文指代的强定位条件。例如“删除刚刚添加的会议”应解析为 DELETE 但不填写 targetTitleKeyword；“删除今天下午三点那个会议”可以填写 date、targetTitleKeyword=会议、targetStartTime=15:00。
+                        16. 会议、会、开会、例会、讨论、评审、汇报属于会议类关键词；用户在没有上下文指代风险时说“会议/会”，targetTitleKeyword 可以填写“会议”。
+                        17. 完全没有日程管理含义时，action=NONE。
+                        18. “然后、还有、再、另外、顺便、以及”通常表示多条指令。
+                        19. 如果一句话中出现多个明确时间点和多个日程内容，且没有周期语义，通常应拆成多条 CREATE。
+                        20. 如果某一条缺少必要字段，只让这一条保留缺失字段，不要影响其它条。
+                        21. 最多输出 %d 条 action；如果超过，保留最明确的前 %d 条。
+                        22. 必须只输出 JSON 对象，不要输出 Markdown、解释文字或代码块。
 
                         输出示例：
                         {

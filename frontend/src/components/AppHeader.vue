@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { LogOut, Mic, Repeat2, Settings } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
+import { useAssistantStore } from '../stores/assistant'
 import { useAuthStore } from '../stores/auth'
 import { useCalendarStore } from '../stores/calendar'
 import { useRecurringStore } from '../stores/recurring'
 import { useVoiceStore } from '../stores/voice'
 
 const router = useRouter()
+const assistantStore = useAssistantStore()
 const authStore = useAuthStore()
 const calendarStore = useCalendarStore()
 const recurringStore = useRecurringStore()
 const voiceStore = useVoiceStore()
 
 function logout() {
+  assistantStore.resetAssistant()
   voiceStore.resetVoice()
   recurringStore.resetRecurring()
   calendarStore.resetCalendar()

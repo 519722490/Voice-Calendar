@@ -89,6 +89,16 @@ export type VoiceStatus = 'idle' | 'connecting' | 'recording' | 'stopping' | 'er
 export type AgentMode = 'review' | 'auto'
 export type SpeechSubmitMode = 'manual' | 'auto'
 
+export type AssistantMessageRole = 'user' | 'assistant'
+
+export type AssistantMessage = {
+  id: string
+  role: AssistantMessageRole
+  content: string
+  streaming: boolean
+  error?: boolean
+}
+
 export type PendingAgentAction = {
   id: string
   expiresAt: string
