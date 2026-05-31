@@ -46,9 +46,13 @@ const voiceStore = useVoiceStore()
           <textarea
             v-model="voiceStore.voiceText"
             rows="7"
+            maxlength="50"
             :disabled="voiceStore.voiceAgentSubmitting || voiceStore.voiceAutoSubmitting"
             placeholder="例如：今天下午三点开项目会"
           ></textarea>
+          <small class="field-hint" :class="{ error: voiceStore.isVoiceTextTooLong }">
+            {{ voiceStore.voiceTextLength }}/50 字
+          </small>
         </label>
 
         <p v-if="voiceStore.voiceError" class="notice error field-full">{{ voiceStore.voiceError }}</p>
