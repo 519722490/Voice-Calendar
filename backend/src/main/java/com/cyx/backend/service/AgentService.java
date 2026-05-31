@@ -45,8 +45,9 @@ public class AgentService {
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
     private static final List<String> MEETING_KEYWORDS = List.of("会议", "开会", "例会", "讨论", "评审", "汇报", "碰头", "沟通");
-    private static final String NO_CLEAR_INTENT_MESSAGE = "未识别到明确的日程管理信息，请说明要添加、查看、修改或删除的日程。";
+    private static final String NO_CLEAR_INTENT_MESSAGE = "未识别到明确的日程管理信息，请说明要添加、查看或删除的日程。";
     private static final String UNCLEAR_TARGET_MESSAGE = "无法确定要操作的具体日程，请提供标题、日期或时间后重试。";
+    private static final String UPDATE_UNSUPPORTED_MESSAGE = "当前语音 Agent 暂不支持修改日程，请在日历页面手动编辑，或删除后重新创建。";
 
     private final ObjectProvider<ChatClient> autoChatClientProvider;
     private final ObjectProvider<ChatClient> reviewChatClientProvider;
@@ -162,13 +163,11 @@ public class AgentService {
         }
 
         if (ACTION_UPDATE.equals(normalizedAction)) {
-            CalendarEvent updated = updateEvent(userId, storedAction);
-            return AgentChatResponse.done(
-                    "已修改日程：\n" + formatEvent(updated),
+            return AgentChatResponse.failed(
+                    UPDATE_UNSUPPORTED_MESSAGE,
                     MODE_REVIEW,
                     ACTION_UPDATE,
-                    updated,
-                    List.of(updated)
+                    List.of()
             );
         }
 
@@ -230,6 +229,9 @@ public class AgentService {
         if (actions.stream().anyMatch(this::isRecurringIntent)) {
             return AgentChatResponse.failed("检测到周期日程。为避免误创建或误删除整条重复规则，请切换审查模式确认后执行。", mode, ACTION_NONE, List.of());
         }
+        if (actions.stream().anyMatch(action -> ACTION_UPDATE.equals(normalizeAction(action.action())))) {
+            return AgentChatResponse.failed(UPDATE_UNSUPPORTED_MESSAGE, mode, ACTION_UPDATE, List.of());
+        }
         boolean hasLowConfidenceAction = actions.stream()
                 .anyMatch(action -> isBelowConfidenceThreshold(effectiveConfidence(plan, action), autoConfidenceThreshold));
         if (hasLowConfidenceAction) {
@@ -276,14 +278,14 @@ public class AgentService {
 
                         单条 action 字段说明：
                         - action：只能是 CREATE、QUERY、UPDATE、DELETE、NONE。添加/安排/提醒我/记一下 => CREATE；查看/查询/有哪些 => QUERY；修改/改到/挪到/改成 => UPDATE；删除/取消/撤销/删掉/移除/不去了/不参加/作废/不再/不用/不 + 日程内容 + 了 => DELETE。
-                        - title/date/startTime/endTime/location/description/tag/reminderTime：用于创建或查询；修改/删除时 date 表示原日程所在日期；date 必须是 yyyy-MM-dd，时间必须是 HH:mm。
+                        - title/date/startTime/endTime/location/description/tag/reminderTime：用于创建或查询；删除时 date 表示原日程所在日期；date 必须是 yyyy-MM-dd，时间必须是 HH:mm。
                         - tag 和 newTag 只能从固定值中选择：会议、工作、学习、生活、运动、出行、提醒、其他。识别不出来时必须填写“其他”。
                         - targetId：用户明确说出日程 id 时填写。
-                        - targetTitleKeyword：修改或删除时，用于定位原日程的标题关键词。
-                        - targetStartTime：修改或删除时，用于定位原日程的原开始时间，格式 HH:mm。
-                        - targetStartTimeFrom/targetStartTimeTo：修改或删除时，用于定位原日程开始时间范围，格式 HH:mm。上午=06:00 到 12:00，下午=12:00 到 18:00，晚上=18:00 到 23:59；没有时间段就留空。
-                        - newTitle/newDate/newStartTime/newEndTime/newLocation/newDescription/newTag/newReminderTime：修改后的新字段。
-                        - recurring：是否为重复日程。用户说每天、每周、每月、工作日、本周每天、今年每天、每周一三五等周期表达时必须为 true；无论是创建、查询、修改还是删除，只要目标是重复规则或一组重复发生的日程，都必须为 true。
+                        - targetTitleKeyword：删除时用于定位原日程的标题关键词。
+                        - targetStartTime：删除时用于定位原日程的原开始时间，格式 HH:mm。
+                        - targetStartTimeFrom/targetStartTimeTo：删除时用于定位原日程开始时间范围，格式 HH:mm。上午=06:00 到 12:00，下午=12:00 到 18:00，晚上=18:00 到 23:59；没有时间段就留空。
+                        - newTitle/newDate/newStartTime/newEndTime/newLocation/newDescription/newTag/newReminderTime：保留字段；当前语音 Agent 不执行修改，解析到修改意图时可以留空。
+                        - recurring：是否为重复日程。用户说每天、每周、每月、工作日、本周每天、今年每天、每周一三五等周期表达时必须为 true；无论是创建、查询还是删除，只要目标是重复规则或一组重复发生的日程，都必须为 true。
                         - recurrenceType：重复类型，只能是 DAILY、WEEKLY、MONTHLY。第一版优先输出 DAILY 或 WEEKLY。
                         - recurrenceStartDate/recurrenceEndDate：重复日程的开始和结束日期，格式 yyyy-MM-dd。不要创建无限重复。
                         - recurrenceInterval：重复间隔，例如每天为 1，每两天为 2。
@@ -295,17 +297,17 @@ public class AgentService {
                         1. 用户表达添加日程时用 CREATE；只要有日期、开始时间和日程内容即可创建。
                         2. “今天下午三点开会”的 title 是“开会”，date 用当前日期换算，startTime 是 15:00。
                         3. 创建日程时必须输出 tag。标签示例：开会、评审、讨论、汇报 => 会议；去工位、写代码、项目开发 => 工作；上课、复习、考试 => 学习；吃饭、购物、看病 => 生活；跑步、健身、打球 => 运动；出差、坐车、去机场 => 出行；提醒我、记得、闹钟 => 提醒。
-                        4. 周期表达必须输出 recurring=true，不要展开成多条普通 CREATE，也不要把周期删除/修改当成某一天的普通日程。例如“本周每天晚上八点背单词”是一条 DAILY 重复日程，不是 7 条普通日程。
+                        4. 周期表达必须输出 recurring=true，不要展开成多条普通 CREATE，也不要把周期删除当成某一天的普通日程。例如“本周每天晚上八点背单词”是一条 DAILY 重复日程，不是 7 条普通日程。
                         5. “今年每天晚上八点背单词”应解析为：recurring=true，recurrenceType=DAILY，recurrenceStartDate=当前日期，recurrenceEndDate=当年 12-31，startTime=20:00。
                         6. “每周一三五晚上跑步”应解析为：recurring=true，recurrenceType=WEEKLY，recurrenceDaysOfWeek=["MON","WED","FRI"]。
                         7. 如果用户说“每天晚上背单词”但没有结束日期，recurrenceEndDate 可以留空，由审查模式后端默认未来 30 天；自动模式会拒绝执行。
-                        8. 修改时，target 字段描述原日程，new 字段描述要改成的新内容。例如“把今天三点的会改到四点”：targetStartTime=15:00，newStartTime=16:00。
+                        8. 当前语音 Agent 不支持修改单次日程或重复日程。用户表达“修改、改到、挪到、改成、提前、推迟”等修改意图时仍解析为 UPDATE，但不要补全修改字段，后端会返回不支持提示；不要把修改意图改写成 CREATE 或 DELETE。
                         9. 删除时只提取定位条件，不要假装已经删除。不要只依赖固定关键词；用户表达不再执行某个已经安排的动作，或用否定句取消某个日程，本质是 DELETE。
                         10. 例如“取消今天下午三点的会议”“今天三点的会议不去了”“今天下午不背单词了”“明天不用上课了”都必须解析为 DELETE，不是 UPDATE，也不是 NONE。
                         11. “今天下午不背单词了”应解析为：action=DELETE，date=当前日期，targetTitleKeyword=背单词，targetStartTimeFrom=12:00，targetStartTimeTo=18:00。
                         12. “删除本周每天背单词”“取消每天背单词”“以后每周一三五不跑步了”应解析为：action=DELETE，recurring=true，targetTitleKeyword=背单词/跑步，并填写能识别出的 recurrenceType、recurrenceStartDate、recurrenceEndDate 或 recurrenceDaysOfWeek；绝不能解析成删除今天的单次日程。
                         13. 审查模式不使用对话记忆。“刚刚的日程、刚才那个、上一个、最近的、最新的、它、那个、这条、这个、刚添加的、刚创建的”等上下文指代都不能根据创建顺序、数据库最近记录或上一次操作推断目标。
-                        14. 修改或删除中出现上下文指代时，只有同时存在明确日期、具体时间或时间段、可区分的标题关键词，才允许填写 target 字段；否则 action 仍可解析为 UPDATE/DELETE，但 targetId、targetTitleKeyword、targetStartTime、targetStartTimeFrom、targetStartTimeTo 必须留空，confidence 不高于 0.3。
+                        14. 删除中出现上下文指代时，只有同时存在明确日期、具体时间或时间段、可区分的标题关键词，才允许填写 target 字段；否则 action 仍可解析为 DELETE，但 targetId、targetTitleKeyword、targetStartTime、targetStartTimeFrom、targetStartTimeTo 必须留空，confidence 不高于 0.3。
                         15. 不要把“会议、日程、事情、安排、活动”这类泛化词单独当成上下文指代的强定位条件。例如“删除刚刚添加的会议”应解析为 DELETE 但不填写 targetTitleKeyword；“删除今天下午三点那个会议”可以填写 date、targetTitleKeyword=会议、targetStartTime=15:00。
                         16. 会议、会、开会、例会、讨论、评审、汇报属于会议类关键词；用户在没有上下文指代风险时说“会议/会”，targetTitleKeyword 可以填写“会议”。
                         17. 完全没有日程管理含义时，action=NONE。
@@ -712,54 +714,7 @@ public class AgentService {
     }
 
     private AgentChatResponse prepareUpdate(Long userId, CalendarAgentIntent intent, String mode) {
-        if (isRecurringIntent(intent)) {
-            return AgentChatResponse.failed("识别到重复日程修改意图。当前暂不支持通过 Agent 修改整条重复规则，请先手动处理，或删除后重新创建。", mode, ACTION_UPDATE, List.of());
-        }
-        if (!hasAnyUpdateField(intent)) {
-            return AgentChatResponse.failed("没有识别到要修改成什么内容，请说出新的时间、标题或地点。", mode, ACTION_UPDATE, List.of());
-        }
-        if (!hasAnyTargetLocator(intent)) {
-            return AgentChatResponse.failed(UNCLEAR_TARGET_MESSAGE, mode, ACTION_UPDATE, List.of());
-        }
-
-        List<CalendarEvent> allCandidates = findCandidates(userId, intent);
-        List<CalendarEvent> candidates = singleEventCandidates(allCandidates);
-        if (candidates.isEmpty()) {
-            if (hasRecurringEventInstance(allCandidates)) {
-                return AgentChatResponse.failed("找到的是重复日程实例，不能按普通单次日程修改。当前暂不支持修改重复规则，请先手动处理，或删除后重新创建。", mode, ACTION_UPDATE, List.of());
-            }
-            return AgentChatResponse.failed("没有找到符合条件的日程，无法修改。", mode, ACTION_UPDATE, List.of());
-        }
-        if (candidates.size() > 1) {
-            return AgentChatResponse.failed(
-                    UNCLEAR_TARGET_MESSAGE,
-                    mode,
-                    ACTION_UPDATE,
-                    List.of()
-            );
-        }
-
-        CalendarEvent target = candidates.getFirst();
-        PendingAgentAction pendingAction = confirmationStore.save(userId, new PendingAgentAction(
-                null,
-                null,
-                ACTION_UPDATE,
-                target.id(),
-                blankToNull(intent.newTitle()),
-                blankToNull(intent.newDate()),
-                blankToNull(intent.newStartTime()),
-                blankToNull(intent.newEndTime()),
-                blankToNull(intent.newLocation()),
-                blankToNull(intent.newDescription()),
-                blankToNull(intent.newTag()),
-                blankToNull(intent.newReminderTime())
-        ));
-        return AgentChatResponse.confirmation(
-                "将修改这个日程，请确认：\n" + formatEvent(target) + "\n修改内容：\n" + summarizePendingUpdate(pendingAction) + "\n确认操作会自动过期，请尽快确认。",
-                ACTION_UPDATE,
-                candidates,
-                pendingAction
-        );
+        return AgentChatResponse.failed(UPDATE_UNSUPPORTED_MESSAGE, mode, ACTION_UPDATE, List.of());
     }
 
     private AgentChatResponse prepareDelete(Long userId, CalendarAgentIntent intent, String mode) {
@@ -849,36 +804,6 @@ public class AgentService {
                 ACTION_DELETE_RECURRING,
                 pendingAction
         );
-    }
-
-    private CalendarEvent updateEvent(Long userId, PendingAgentAction action) {
-        CalendarEvent existing = eventService.getEvent(userId, action.eventId());
-        LocalDate resolvedDate = isBlank(action.date())
-                ? existing.startTime().toLocalDate()
-                : LocalDate.parse(action.date());
-        LocalTime resolvedStartTime = isBlank(action.startTime())
-                ? existing.startTime().toLocalTime()
-                : LocalTime.parse(action.startTime());
-        LocalDateTime resolvedEndTime = resolveOptionalTimeOnDate(
-                resolvedDate,
-                action.endTime(),
-                existing.endTime()
-        );
-        LocalDateTime resolvedReminderTime = resolveOptionalTimeOnDate(
-                resolvedDate,
-                action.reminderTime(),
-                existing.reminderTime()
-        );
-
-        return eventService.updateEvent(userId, existing.id(), new EventRequest(
-                firstNonBlank(action.title(), existing.title()),
-                LocalDateTime.of(resolvedDate, resolvedStartTime),
-                resolvedEndTime,
-                firstNullableNonBlank(action.location(), existing.location()),
-                firstNullableNonBlank(action.description(), existing.description()),
-                firstNullableNonBlank(action.tag(), existing.tag()),
-                resolvedReminderTime
-        ));
     }
 
     private List<CalendarEvent> findCandidates(Long userId, CalendarAgentIntent intent) {
@@ -1051,24 +976,6 @@ public class AgentService {
         return isBlank(time) ? null : toDateTime(date, time);
     }
 
-    private LocalDateTime resolveOptionalTimeOnDate(LocalDate date, String newTime, LocalDateTime existing) {
-        if (!isBlank(newTime)) {
-            return LocalDateTime.of(date, LocalTime.parse(newTime));
-        }
-        return existing == null ? null : LocalDateTime.of(date, existing.toLocalTime());
-    }
-
-    private boolean hasAnyUpdateField(CalendarAgentIntent intent) {
-        return !isBlank(intent.newTitle())
-                || !isBlank(intent.newDate())
-                || !isBlank(intent.newStartTime())
-                || !isBlank(intent.newEndTime())
-                || !isBlank(intent.newLocation())
-                || !isBlank(intent.newDescription())
-                || !isBlank(intent.newTag())
-                || !isBlank(intent.newReminderTime());
-    }
-
     private boolean hasAnyTargetLocator(CalendarAgentIntent intent) {
         return intent.targetId() != null
                 || !isBlank(intent.date())
@@ -1077,19 +984,6 @@ public class AgentService {
                 || !isBlank(intent.targetStartTimeFrom())
                 || !isBlank(intent.targetStartTimeTo())
                 || !isBlank(intent.startTime());
-    }
-
-    private String summarizePendingUpdate(PendingAgentAction action) {
-        StringBuilder builder = new StringBuilder();
-        appendField(builder, "标题", action.title());
-        appendField(builder, "日期", action.date());
-        appendField(builder, "开始时间", action.startTime());
-        appendField(builder, "结束时间", action.endTime());
-        appendField(builder, "地点", action.location());
-        appendField(builder, "备注", action.description());
-        appendField(builder, "标签", action.tag());
-        appendField(builder, "提醒时间", action.reminderTime());
-        return builder.isEmpty() ? "未识别到修改内容" : builder.toString();
     }
 
     private String formatPendingEvent(PendingAgentAction action) {
@@ -1340,16 +1234,6 @@ public class AgentService {
             case ACTION_DELETE -> ACTION_DELETE;
             default -> ACTION_NONE;
         };
-    }
-
-    private String firstNonBlank(String value, String fallback) {
-        String normalized = blankToNull(value);
-        return normalized == null ? fallback : normalized;
-    }
-
-    private String firstNullableNonBlank(String value, String fallback) {
-        String normalized = blankToNull(value);
-        return normalized == null ? fallback : normalized;
     }
 
     private String firstNonBlankOrNull(String first, String second) {

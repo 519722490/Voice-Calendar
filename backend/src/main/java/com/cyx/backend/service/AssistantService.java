@@ -47,6 +47,7 @@ public class AssistantService {
     private static final int MAX_MEMORY_EVENTS = 8;
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ofPattern("HH:mm");
+    private static final String UPDATE_UNSUPPORTED_MESSAGE = "当前 AI 助手暂不支持修改日程，请在日历页面手动编辑，或删除后重新创建。";
 
     private final ObjectProvider<ChatClient> assistantChatClientProvider;
     private final ObjectProvider<ChatClient> assistantPlanClientProvider;
@@ -209,8 +210,8 @@ public class AssistantService {
                         单条 action 字段：
                         - action：CREATE、QUERY、UPDATE、DELETE、NONE。
                         - title/date/startTime/endTime/location/description/tag/reminderTime：创建或查询用；date=yyyy-MM-dd，time=HH:mm。
-                        - targetTitleKeyword/targetStartTime/targetStartTimeFrom/targetStartTimeTo：修改或删除时定位原日程。
-                        - newTitle/newDate/newStartTime/newEndTime/newLocation/newDescription/newTag/newReminderTime：修改后的字段。
+                        - targetTitleKeyword/targetStartTime/targetStartTimeFrom/targetStartTimeTo：删除时定位原日程。
+                        - newTitle/newDate/newStartTime/newEndTime/newLocation/newDescription/newTag/newReminderTime：保留字段；当前 AI 助手不执行修改，解析到修改意图时可以留空。
                         - recurring：用户说每天、每周、工作日、本周每天、今年每天、每周一三五等周期表达时为 true。
                         - recurrenceType：DAILY、WEEKLY、MONTHLY。第一版优先 DAILY/WEEKLY。
                         - recurrenceStartDate/recurrenceEndDate/recurrenceInterval/recurrenceDaysOfWeek：重复规则字段。
@@ -221,9 +222,9 @@ public class AssistantService {
                         1. 查询日程直接 QUERY；“今天有什么安排” date=当前日期。
                         2. 添加/安排/提醒我/记一下 => CREATE。只要有日期、开始时间和日程内容即可。
                         3. 删除/取消/撤销/删掉/不去了/不用/不 + 日程内容 + 了 => DELETE。
-                        4. 修改/改到/挪到/改成 => UPDATE。
+                        4. 修改/改到/挪到/改成/提前/推迟 => UPDATE。当前 AI 助手不支持修改单次日程或重复日程，UPDATE 只用于返回不支持提示，不要把修改意图改写成 CREATE 或 DELETE。
                         5. “刚刚设置的、刚才那个、上一个、它、那个、最近的”是引用会话记忆，不要编造目标字段；action 正常解析，缺失定位字段允许留空，后端会用记忆补全。
-                        6. 增删改不要假装已执行，只解析意图。
+                        6. 添加和删除不要假装已执行，只解析意图。
                         7. tag 只能是：会议、工作、学习、生活、运动、出行、提醒、其他。识别不出来用“其他”。
                         8. 完全没有日程管理含义时 action=NONE。
                         9. 必须只输出 JSON 对象。
@@ -256,7 +257,7 @@ public class AssistantService {
     private AssistantReply conversationalReply(String message, AssistantConversation conversation) {
         ChatClient chatClient = assistantChatClientProvider.getIfAvailable();
         if (!aiEnabled || chatClient == null) {
-            return new AssistantReply("我可以帮你查询、添加、修改和删除日程。", false);
+            return new AssistantReply("我可以帮你查询、添加和删除日程。", false);
         }
         String content = chatClient.prompt()
                 .user("""
@@ -320,23 +321,7 @@ public class AssistantService {
         }
 
         if (ACTION_UPDATE.equals(action)) {
-            CalendarEvent target = resolveSingleTarget(userId, message, intent, conversation);
-            PendingAgentAction pending = new PendingAgentAction(
-                    null,
-                    null,
-                    ACTION_UPDATE,
-                    target.id(),
-                    blankToNull(intent.newTitle()),
-                    firstNonBlank(intent.newDate(), intent.date()),
-                    blankToNull(intent.newStartTime()),
-                    blankToNull(intent.newEndTime()),
-                    blankToNull(intent.newLocation()),
-                    blankToNull(intent.newDescription()),
-                    blankToNull(intent.newTag()),
-                    blankToNull(intent.newReminderTime())
-            );
-            return new AssistantPendingOperation(ACTION_UPDATE, pending, null,
-                    "修改日程：\n" + formatEvent(target) + "\n修改为：\n" + formatPendingUpdate(pending));
+            throw new IllegalArgumentException(UPDATE_UNSUPPORTED_MESSAGE);
         }
 
         if (ACTION_DELETE.equals(action)) {
@@ -459,10 +444,7 @@ public class AssistantService {
                     yield new AssistantExecutionResult("已添加日程：\n" + formatEvent(event), true);
                 }
                 case ACTION_UPDATE -> {
-                    CalendarEvent existing = eventService.getEvent(userId, action.eventId());
-                    CalendarEvent updated = eventService.updateEvent(userId, action.eventId(), toUpdateRequest(existing, action));
-                    conversation.lastEvent(updated);
-                    yield new AssistantExecutionResult("已修改日程：\n" + formatEvent(updated), true);
+                    yield new AssistantExecutionResult(UPDATE_UNSUPPORTED_MESSAGE, false);
                 }
                 case ACTION_DELETE -> {
                     CalendarEvent existing = eventService.getEvent(userId, action.eventId());
@@ -502,27 +484,6 @@ public class AssistantService {
                 action.description(),
                 action.tag(),
                 isBlank(action.reminderTime()) ? null : LocalDateTime.of(date, LocalTime.parse(action.reminderTime()))
-        );
-    }
-
-    private EventRequest toUpdateRequest(CalendarEvent existing, PendingAgentAction action) {
-        LocalDate date = isBlank(action.date()) ? existing.startTime().toLocalDate() : LocalDate.parse(action.date());
-        LocalTime startTime = isBlank(action.startTime()) ? existing.startTime().toLocalTime() : LocalTime.parse(action.startTime());
-        LocalTime endTime = isBlank(action.endTime())
-                ? existing.endTime() == null ? null : existing.endTime().toLocalTime()
-                : LocalTime.parse(action.endTime());
-        LocalTime reminderTime = isBlank(action.reminderTime())
-                ? existing.reminderTime() == null ? null : existing.reminderTime().toLocalTime()
-                : LocalTime.parse(action.reminderTime());
-
-        return new EventRequest(
-                firstNonBlank(action.title(), existing.title()),
-                LocalDateTime.of(date, startTime),
-                endTime == null ? null : LocalDateTime.of(date, endTime),
-                firstNullableNonBlank(action.location(), existing.location()),
-                firstNullableNonBlank(action.description(), existing.description()),
-                firstNonBlank(action.tag(), existing.tag()),
-                reminderTime == null ? null : LocalDateTime.of(date, reminderTime)
         );
     }
 
@@ -665,19 +626,6 @@ public class AssistantService {
         appendField(builder, "提醒", action.reminderTime());
         appendField(builder, "备注", action.description());
         return builder.toString();
-    }
-
-    private String formatPendingUpdate(PendingAgentAction action) {
-        StringBuilder builder = new StringBuilder();
-        appendField(builder, "标题", action.title());
-        appendField(builder, "日期", action.date());
-        appendField(builder, "开始时间", action.startTime());
-        appendField(builder, "结束时间", action.endTime());
-        appendField(builder, "地点", action.location());
-        appendField(builder, "标签", action.tag());
-        appendField(builder, "提醒", action.reminderTime());
-        appendField(builder, "备注", action.description());
-        return builder.length() == 0 ? "未识别到修改内容" : builder.toString();
     }
 
     private String formatPendingRecurringEvent(PendingRecurringAgentAction action) {
@@ -876,11 +824,6 @@ public class AssistantService {
     }
 
     private String firstNonBlank(String value, String fallback) {
-        String normalized = blankToNull(value);
-        return normalized == null ? fallback : normalized;
-    }
-
-    private String firstNullableNonBlank(String value, String fallback) {
         String normalized = blankToNull(value);
         return normalized == null ? fallback : normalized;
     }

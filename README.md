@@ -39,7 +39,7 @@
 ```text
 Voice Calendar
 ├─ backend                 Spring Boot 后端
-│  ├─ config               本地私有配置，不提交 Git
+│  ├─ .env.example         后端环境变量模板
 │  └─ src
 ├─ frontend                Vue 前端
 │  ├─ src/api              Axios 与接口基础配置
@@ -88,40 +88,29 @@ Windows PowerShell：
 Get-Content .\sql\init.sql | docker exec -i voice-calendar-postgres psql -U voice_calendar -d voice_calendar
 ```
 
-如果使用已有服务器数据库，只需要把后端配置中的数据库地址改为服务器地址，例如：
+如果使用已有服务器数据库，只需要把 `backend/.env` 中的数据库地址改为服务器地址，例如：
 
 ```properties
-spring.datasource.url=jdbc:postgresql://121.40.210.76:5432/voice_calendar
+VOICE_CALENDAR_DB_URL=jdbc:postgresql://121.40.210.76:5432/voice_calendar
 ```
 
 更多说明见 `sql/README.md`。
 
 ### 3. 配置后端
 
-在 `backend/config/application-local.properties` 中填写本地私有配置。该文件已被 `.gitignore` 忽略，不要提交 API Key。
+后端使用 `backend/.env` 保存本地私有配置。该文件已被 `.gitignore` 忽略，不要提交 API Key、数据库密码和 JWT 密钥。
 
-```properties
-voice-calendar.ai.enabled=true
-spring.ai.dashscope.enabled=true
-spring.ai.dashscope.agent.enabled=false
-spring.ai.dashscope.api-key=你的DashScopeKey
-spring.ai.dashscope.chat.options.model=qwen-plus
-spring.ai.dashscope.chat.options.temperature=0.2
-
-voice-calendar.speech.enabled=true
-voice-calendar.speech.provider=dashscope
-voice-calendar.speech.api-key=你的DashScopeKey
-voice-calendar.speech.model=fun-asr-realtime
-voice-calendar.speech.endpoint=wss://dashscope.aliyuncs.com/api-ws/v1/inference
-voice-calendar.speech.sample-rate=16000
-voice-calendar.speech.format=pcm
-
-spring.datasource.url=jdbc:postgresql://localhost:5432/voice_calendar
-spring.datasource.username=voice_calendar
-spring.datasource.password=123456
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.open-in-view=false
+```bash
+cp backend/.env.example backend/.env
 ```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item backend\.env.example backend\.env
+```
+
+然后编辑 `backend/.env`，填写数据库配置。基础日历功能不需要 DashScope Key；如果要使用 Agent 或语音识别，再把 AI/语音开关改成 `true` 并填写 DashScope Key。
 
 ### 4. 启动后端
 
@@ -179,7 +168,7 @@ java -jar target/backend-0.0.1-SNAPSHOT.jar
 export VOICE_CALENDAR_DB_URL=jdbc:postgresql://127.0.0.1:5432/voice_calendar
 export VOICE_CALENDAR_DB_USERNAME=voice_calendar
 export VOICE_CALENDAR_DB_PASSWORD=123456
-export VOICE_CALENDAR_AUTH_JWT_SECRET=请替换成至少32字节的Base64密钥
+export VOICE_CALENDAR_JWT_SECRET=请替换成至少32字节的Base64密钥
 export VOICE_CALENDAR_AI_ENABLED=true
 export SPRING_AI_DASHSCOPE_ENABLED=true
 export SPRING_AI_DASHSCOPE_API_KEY=你的DashScopeKey
@@ -188,7 +177,7 @@ export VOICE_CALENDAR_SPEECH_API_KEY=你的DashScopeKey
 java -jar target/backend-0.0.1-SNAPSHOT.jar
 ```
 
-当前项目也支持通过 `backend/config/application-local.properties` 读取本地配置，部署时二选一即可。
+服务器也可以直接放置 `backend/.env`，或使用系统环境变量注入配置，二选一即可。
 
 ### 前端打包部署
 
@@ -251,9 +240,9 @@ npm run build
 
 | 模式 | 入口 | 执行方式 | 适合场景 |
 |---|---|---|---|
-| 审查模式 | 语音识别文本提交 | 先解析意图，再生成待确认操作，用户确认后执行 | 多指令、重复日程、需要人工确认的增删改操作 |
-| 自动模式 | 静音自动提交语音文本 | 高置信度单次日程直接执行；不确定或周期日程直接失败 | 快速添加、查询、明确的单次日程操作 |
-| AI 助手模式 | 侧边悬浮助手 | 支持对话和记忆；查询可直接回答，增删改需在聊天中确认 | 连续对话、上下文指代、复杂日程管理 |
+| 审查模式 | 语音识别文本提交 | 先解析意图，再生成待确认操作，用户确认后执行；不支持修改 | 多指令、重复日程、需要人工确认的添加/删除操作 |
+| 自动模式 | 静音自动提交语音文本 | 高置信度单次日程直接执行；不确定、修改或周期日程直接失败 | 快速添加、查询、明确的单次删除操作 |
+| AI 助手模式 | 侧边悬浮助手 | 支持对话和记忆；查询可直接回答，添加/删除需在聊天中确认；不支持修改 | 连续对话、上下文指代、复杂日程查询与管理 |
 
 ## 注意事项
 

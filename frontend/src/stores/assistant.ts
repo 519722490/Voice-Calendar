@@ -23,7 +23,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     {
       id: createMessageId(),
       role: 'assistant',
-      content: '你好，我是 AI 日历助手。可以直接问我今天有什么安排，也可以让我帮你添加、修改或删除日程。',
+      content: '你好，我是 AI 日历助手。可以直接问我今天有什么安排，也可以让我帮你添加或删除日程。',
       streaming: false,
     },
   ])
@@ -405,7 +405,7 @@ export const useAssistantStore = defineStore('assistant', () => {
       {
         id: createMessageId(),
         role: 'assistant',
-        content: '你好，我是 AI 日历助手。可以直接问我今天有什么安排，也可以让我帮你添加、修改或删除日程。',
+        content: '你好，我是 AI 日历助手。可以直接问我今天有什么安排，也可以让我帮你添加或删除日程。',
         streaming: false,
       },
     ]
