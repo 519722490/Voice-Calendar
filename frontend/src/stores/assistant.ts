@@ -23,7 +23,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     {
       id: createMessageId(),
       role: 'assistant',
-      content: '你好，我是 AI 日历助手。可以直接问我今天有什么安排，也可以让我帮你添加或删除日程。',
+      content: '你好，我是智能日历助手。可以直接问我今天有什么安排，也可以让我帮你添加或删除日程。',
       streaming: false,
     },
   ])
@@ -74,7 +74,7 @@ export const useAssistantStore = defineStore('assistant', () => {
       return
     }
     if (!authStore.authToken) {
-      errorMessage.value = '请先登录后再使用 AI 助手'
+      errorMessage.value = '请先登录后再使用智能日历助手'
       return
     }
 
@@ -111,13 +111,13 @@ export const useAssistantStore = defineStore('assistant', () => {
       })
 
       if (!response.ok || !response.body) {
-        throw new Error(await response.text() || 'AI 助手请求失败')
+        throw new Error(await response.text() || '智能日历助手请求失败')
       }
 
       await readAssistantStream(response, assistantMessage)
     } catch (error) {
       assistantMessage.error = true
-      assistantMessage.content ||= getApiErrorMessage(error, 'AI 助手请求失败')
+      assistantMessage.content ||= getApiErrorMessage(error, '智能日历助手请求失败')
       errorMessage.value = assistantMessage.content
     } finally {
       assistantMessage.streaming = false
@@ -175,7 +175,7 @@ export const useAssistantStore = defineStore('assistant', () => {
 
     if (payload.type === 'error') {
       assistantMessage.error = true
-      assistantMessage.content += payload.content ?? 'AI 助手处理失败'
+      assistantMessage.content += payload.content ?? '智能日历助手处理失败'
       return true
     }
 
@@ -405,7 +405,7 @@ export const useAssistantStore = defineStore('assistant', () => {
       {
         id: createMessageId(),
         role: 'assistant',
-        content: '你好，我是 AI 日历助手。可以直接问我今天有什么安排，也可以让我帮你添加或删除日程。',
+        content: '你好，我是智能日历助手。可以直接问我今天有什么安排，也可以让我帮你添加或删除日程。',
         streaming: false,
       },
     ]

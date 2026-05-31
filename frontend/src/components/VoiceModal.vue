@@ -10,7 +10,7 @@ const voiceStore = useVoiceStore()
     <section class="modal voice-modal" role="dialog" aria-modal="true" aria-labelledby="voice-form-title">
       <header class="modal-header">
         <div>
-          <p class="eyebrow">Voice Input</p>
+          <p class="eyebrow">语音输入</p>
           <h2 id="voice-form-title">语音内容</h2>
         </div>
         <button class="icon-button" type="button" aria-label="关闭" @click="voiceStore.closeVoiceForm">×</button>
@@ -57,7 +57,7 @@ const voiceStore = useVoiceStore()
           <button class="today-button" type="button" @click="voiceStore.closeVoiceForm">取消</button>
           <button class="primary-button voice-action-button" type="submit" :disabled="!voiceStore.canSubmitVoiceToAgent">
             <Send :size="16" :stroke-width="2.4" aria-hidden="true" />
-            <span>{{ voiceStore.voiceAutoSubmitting ? '自动发送中...' : voiceStore.voiceAgentSubmitting ? '发送中...' : '发送给 Agent' }}</span>
+            <span>{{ voiceStore.voiceAutoSubmitting ? '自动发送中...' : voiceStore.voiceAgentSubmitting ? '发送中...' : '执行日程操作' }}</span>
           </button>
         </footer>
       </form>

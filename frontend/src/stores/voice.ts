@@ -7,6 +7,7 @@ import type {
   AgentActionResult,
   AgentChatResponse,
   AgentMode,
+  CalendarEvent,
   PendingAgentAction,
   SpeechSubmitMode,
   VoiceStatus,
@@ -214,9 +215,9 @@ export const useVoiceStore = defineStore('voice', () => {
       showAgentResult()
       isVoiceFormOpen.value = false
       isVoiceBannerOpen.value = false
-      await calendarStore.loadEvents()
+      await refreshCalendarAfterAgentResponse(data)
     } catch (error) {
-      voiceError.value = getApiErrorMessage(error, '发送给 Agent 失败')
+      voiceError.value = getApiErrorMessage(error, '发送给日程助手失败')
     } finally {
       voiceAgentSubmitting.value = false
     }
@@ -236,7 +237,7 @@ export const useVoiceStore = defineStore('voice', () => {
       voiceAgentMessage.value = data.content
       updateConfirmedAgentResult(action.id, data)
       showAgentResult()
-      await calendarStore.loadEvents()
+      await refreshCalendarAfterAgentResponse(data)
     } catch (error) {
       voiceError.value = getApiErrorMessage(error, '确认执行失败')
     } finally {
@@ -508,6 +509,31 @@ export const useVoiceStore = defineStore('voice', () => {
       response.results?.find((result) => result.pendingAction || result.pendingRecurringAction)?.pendingRecurringAction ??
       (response.needsConfirmation ? response.pendingAction ?? response.pendingRecurringAction ?? null : null)
     )
+  }
+
+  async function refreshCalendarAfterAgentResponse(response: AgentChatResponse) {
+    const createdEvents = collectCreatedEvents(response)
+    if (createdEvents.length) {
+      calendarStore.highlightEvents(createdEvents)
+    }
+
+    await calendarStore.loadEvents()
+  }
+
+  function collectCreatedEvents(response: AgentChatResponse) {
+    const createdEvents: CalendarEvent[] = []
+
+    if (response.success && response.action === 'CREATE' && response.event) {
+      createdEvents.push(response.event)
+    }
+
+    for (const result of response.results ?? []) {
+      if (result.success && result.action === 'CREATE' && result.event) {
+        createdEvents.push(result.event)
+      }
+    }
+
+    return createdEvents
   }
 
   function updateConfirmedAgentResult(actionId: string, response: AgentChatResponse) {

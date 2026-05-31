@@ -6,6 +6,7 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
@@ -55,7 +56,18 @@ public class JwtService {
     }
 
     private SecretKey signingKey() {
-        byte[] decoded = Base64.getDecoder().decode(authProperties.getJwtSecret());
-        return Keys.hmacShaKeyFor(decoded);
+        String secret = authProperties.getJwtSecret();
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("JWT 密钥不能为空");
+        }
+        return Keys.hmacShaKeyFor(decodeSecret(secret.trim()));
+    }
+
+    private byte[] decodeSecret(String secret) {
+        try {
+            return Base64.getDecoder().decode(secret);
+        } catch (IllegalArgumentException exception) {
+            return secret.getBytes(StandardCharsets.UTF_8);
+        }
     }
 }
