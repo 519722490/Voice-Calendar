@@ -114,6 +114,29 @@ public class AgentConfirmationStore {
         throw new IllegalArgumentException("待确认操作不存在或已过期，请重新发起语音指令。");
     }
 
+    public void cancelAny(Long userId, String actionId) {
+        cleanupExpired();
+        if (actionId == null || actionId.isBlank()) {
+            throw new IllegalArgumentException("缺少待取消操作，请重新发起语音指令。");
+        }
+
+        StoredPendingAction stored = pendingActions.get(actionId);
+        if (stored != null) {
+            validateSingleAction(actionId, stored, userId);
+            pendingActions.remove(actionId, stored);
+            return;
+        }
+
+        StoredPendingRecurringAction recurringStored = pendingRecurringActions.get(actionId);
+        if (recurringStored != null) {
+            validateRecurringAction(actionId, recurringStored, userId);
+            pendingRecurringActions.remove(actionId, recurringStored);
+            return;
+        }
+
+        throw new IllegalArgumentException("待取消操作不存在或已过期，请重新发起语音指令。");
+    }
+
     private void cleanupExpired() {
         pendingActions.entrySet().removeIf(entry -> isExpired(entry.getValue().action()));
         pendingRecurringActions.entrySet().removeIf(entry -> isExpired(entry.getValue().action()));

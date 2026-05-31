@@ -28,4 +28,9 @@ public class AgentController {
     public AgentChatResponse confirm(@RequestBody PendingAgentAction action) {
         return agentService.confirm(action);
     }
+
+    @PostMapping("/cancel")
+    public AgentChatResponse cancel(@RequestBody PendingAgentAction action) {
+        return agentService.cancel(action);
+    }
 }

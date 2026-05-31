@@ -201,6 +201,63 @@ class CalendarEventControllerTests {
                 .andExpect(jsonPath("$", hasSize(1)));
     }
 
+    @Test
+    void shouldUpdateWholeRecurringRuleAndRefreshInstances() throws Exception {
+        String token = TestAuthHelper.registerUser(mockMvc, objectMapper, "recurring_update_user").token();
+
+        String recurringJson = mockMvc.perform(post("/api/recurring-events")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "背单词",
+                                  "startDate": "2030-06-01",
+                                  "endDate": "2030-06-03",
+                                  "startTime": "20:00",
+                                  "recurrenceType": "DAILY",
+                                  "intervalValue": 1,
+                                  "tag": "学习"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        Long recurringId = JsonTestHelper.extractId(recurringJson);
+
+        mockMvc.perform(put("/api/recurring-events/{id}", recurringId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "title": "复习英语",
+                                  "startDate": "2030-06-01",
+                                  "endDate": "2030-06-03",
+                                  "startTime": "21:00",
+                                  "recurrenceType": "DAILY",
+                                  "intervalValue": 1,
+                                  "tag": "学习",
+                                  "location": "书房"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(recurringId))
+                .andExpect(jsonPath("$.title").value("复习英语"))
+                .andExpect(jsonPath("$.startTime").value("21:00:00"))
+                .andExpect(jsonPath("$.location").value("书房"));
+
+        mockMvc.perform(get("/api/events")
+                        .header("Authorization", "Bearer " + token)
+                        .param("date", "2030-06-02"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].sourceType").value("RECURRING"))
+                .andExpect(jsonPath("$[0].recurringEventId").value(recurringId))
+                .andExpect(jsonPath("$[0].title").value("复习英语"))
+                .andExpect(jsonPath("$[0].startTime").value("2030-06-02T21:00:00"))
+                .andExpect(jsonPath("$[0].location").value("书房"));
+    }
+
     static class JsonTestHelper {
         private JsonTestHelper() {
         }

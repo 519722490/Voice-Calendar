@@ -32,6 +32,7 @@ export const useVoiceStore = defineStore('voice', () => {
   const speechSubmitMode = ref<SpeechSubmitMode>('manual')
   const voiceAutoSubmitting = ref(false)
   const pendingAgentAction = ref<PendingAgentAction | null>(null)
+  const agentResultCancelled = ref(false)
 
   let speechSocket: WebSocket | null = null
   let audioContext: AudioContext | null = null
@@ -93,6 +94,10 @@ export const useVoiceStore = defineStore('voice', () => {
       return '需要确认'
     }
 
+    if (agentResultCancelled.value) {
+      return '已取消'
+    }
+
     if (voiceAgentResults.value.some((result) => !result.success)) {
       return '操作未完成'
     }
@@ -119,10 +124,11 @@ export const useVoiceStore = defineStore('voice', () => {
   }
 
   function closeVoiceForm() {
-    resetVoiceAutoSubmitState()
-    cleanupSpeechSocket()
-    stopAudioCapture()
+    abortVoiceRecognition()
     isVoiceFormOpen.value = false
+    voiceText.value = ''
+    finalVoiceText = ''
+    voiceError.value = ''
   }
 
   function startInlineVoiceRecognition() {
@@ -193,6 +199,7 @@ export const useVoiceStore = defineStore('voice', () => {
     voiceAgentMessage.value = ''
     voiceAgentResults.value = []
     pendingAgentAction.value = null
+    agentResultCancelled.value = false
     voiceAgentSubmitting.value = true
 
     try {
@@ -221,6 +228,7 @@ export const useVoiceStore = defineStore('voice', () => {
     }
 
     voiceError.value = ''
+    agentResultCancelled.value = false
     voiceAgentSubmitting.value = true
 
     try {
@@ -231,6 +239,29 @@ export const useVoiceStore = defineStore('voice', () => {
       await calendarStore.loadEvents()
     } catch (error) {
       voiceError.value = getApiErrorMessage(error, '确认执行失败')
+    } finally {
+      voiceAgentSubmitting.value = false
+    }
+  }
+
+  async function cancelPendingAgentAction(action: PendingAgentAction | null = pendingAgentAction.value) {
+    if (!action || voiceAgentSubmitting.value) {
+      return
+    }
+
+    voiceError.value = ''
+    voiceAgentSubmitting.value = true
+
+    try {
+      const { data } = await http.post<AgentChatResponse>('/api/agent/cancel', { id: action.id })
+      if (!data.success) {
+        voiceError.value = data.content || '取消执行失败'
+        return
+      }
+      updateCancelledAgentResult(action.id, data.content || '已取消执行。')
+      showAgentResult()
+    } catch (error) {
+      voiceError.value = getApiErrorMessage(error, '取消执行失败')
     } finally {
       voiceAgentSubmitting.value = false
     }
@@ -452,6 +483,7 @@ export const useVoiceStore = defineStore('voice', () => {
     voiceAgentMessage.value = ''
     voiceAgentResults.value = []
     pendingAgentAction.value = null
+    agentResultCancelled.value = false
     isAgentResultOpen.value = false
     resetVoiceAutoSubmitState()
     voiceConversationId = `voice-${Date.now()}`
@@ -463,6 +495,7 @@ export const useVoiceStore = defineStore('voice', () => {
     voiceAgentMessage.value = ''
     voiceAgentResults.value = []
     pendingAgentAction.value = null
+    agentResultCancelled.value = false
   }
 
   function showAgentResult() {
@@ -506,6 +539,37 @@ export const useVoiceStore = defineStore('voice', () => {
       ?? null
   }
 
+  function updateCancelledAgentResult(actionId: string, message: string) {
+    if (!voiceAgentResults.value.length) {
+      voiceAgentMessage.value = message
+      pendingAgentAction.value = null
+      agentResultCancelled.value = true
+      return
+    }
+
+    let cancelled = false
+    voiceAgentResults.value = voiceAgentResults.value.map((result) => {
+      if (result.pendingAction?.id !== actionId && result.pendingRecurringAction?.id !== actionId) {
+        return result
+      }
+
+      cancelled = true
+      return {
+        ...result,
+        success: false,
+        needsConfirmation: false,
+        message,
+        pendingAction: null,
+        pendingRecurringAction: null,
+      }
+    })
+
+    pendingAgentAction.value = voiceAgentResults.value.find((result) => result.pendingAction || result.pendingRecurringAction)?.pendingAction
+      ?? voiceAgentResults.value.find((result) => result.pendingAction || result.pendingRecurringAction)?.pendingRecurringAction
+      ?? null
+    agentResultCancelled.value = cancelled && !pendingAgentAction.value
+  }
+
   function clearVoiceAutoSubmitTimer() {
     if (voiceAutoSubmitTimer === undefined) {
       return
@@ -519,6 +583,13 @@ export const useVoiceStore = defineStore('voice', () => {
     clearVoiceAutoSubmitTimer()
     voiceAutoSubmitTriggered = false
     voiceAutoSubmitting.value = false
+  }
+
+  function abortVoiceRecognition() {
+    resetVoiceAutoSubmitState()
+    cleanupSpeechSocket()
+    stopAudioCapture()
+    voiceStatus.value = 'idle'
   }
 
   function cleanupSpeechSocket() {
@@ -569,6 +640,7 @@ export const useVoiceStore = defineStore('voice', () => {
     finalVoiceText = ''
     voiceError.value = ''
     voiceStatus.value = 'idle'
+    agentResultCancelled.value = false
     resetVoiceAutoSubmitState()
   }
 
@@ -604,6 +676,7 @@ export const useVoiceStore = defineStore('voice', () => {
     startVoiceRecognition,
     submitVoiceToAgent,
     confirmPendingAgentAction,
+    cancelPendingAgentAction,
     stopVoiceRecognition,
     closeAgentResult,
     resetVoice,

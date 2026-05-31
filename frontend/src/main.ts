@@ -6,6 +6,7 @@ import { onAuthFailure } from './api/http'
 import { router } from './router'
 import { useAuthStore } from './stores/auth'
 import { useCalendarStore } from './stores/calendar'
+import { useRecurringStore } from './stores/recurring'
 import { useVoiceStore } from './stores/voice'
 
 const app = createApp(App)
@@ -17,6 +18,7 @@ const authStore = useAuthStore()
 
 onAuthFailure(() => {
   useVoiceStore().resetVoice()
+  useRecurringStore().resetRecurring()
   useCalendarStore().resetCalendar()
   authStore.clearAuth()
   void router.replace({ name: 'login' })

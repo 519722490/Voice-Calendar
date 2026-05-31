@@ -216,6 +216,13 @@ h3 {
   font-weight: 700;
 }
 
+.icon-text-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
 .primary-button {
   min-height: 40px;
   padding: 0 18px;
@@ -547,6 +554,111 @@ h3 {
   width: min(620px, 100%);
 }
 
+.recurring-manager-modal {
+  width: min(820px, 100%);
+}
+
+.recurring-manager-body {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+}
+
+.recurring-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.recurring-list-toolbar div {
+  display: grid;
+  gap: 3px;
+}
+
+.recurring-list-toolbar span {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.recurring-rule-list {
+  display: grid;
+  gap: 12px;
+}
+
+.recurring-rule-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  background: #fbfcfd;
+}
+
+.recurring-rule-main {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.recurring-rule-main p,
+.recurring-rule-muted {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.recurring-rule-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.recurring-rule-actions {
+  justify-content: flex-end;
+}
+
+.recurring-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.weekday-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+
+.weekday-field legend {
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.weekday-option {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.weekday-option input {
+  width: auto;
+  accent-color: var(--accent);
+}
+
 .settings-body {
   display: grid;
   gap: 14px;
@@ -658,6 +770,12 @@ h3 {
 
 .voice-confirm-button {
   justify-self: start;
+}
+
+.agent-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .voice-mode-row {
@@ -831,7 +949,8 @@ h3 {
 }
 
 .field input,
-.field textarea {
+.field textarea,
+.field select {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -841,7 +960,8 @@ h3 {
   font-size: 15px;
 }
 
-.field input {
+.field input,
+.field select {
   min-height: 42px;
   padding: 0 12px;
 }
@@ -853,16 +973,25 @@ h3 {
 }
 
 .field input:focus,
-.field textarea:focus {
+.field textarea:focus,
+.field select:focus {
   border-color: var(--accent);
   outline: 3px solid rgba(38, 114, 111, 0.14);
 }
 
 .field input:disabled,
-.field textarea:disabled {
+.field textarea:disabled,
+.field select:disabled {
   background: #f8fafc;
   color: var(--text-muted);
   cursor: not-allowed;
+}
+
+.weekday-option input {
+  width: auto;
+  min-height: auto;
+  padding: 0;
+  accent-color: var(--accent);
 }
 
 .form-actions {
@@ -944,6 +1073,26 @@ h3 {
   .agenda-actions {
     grid-column: 1 / -1;
     justify-content: flex-end;
+  }
+
+  .recurring-rule-item {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .recurring-rule-tags,
+  .recurring-rule-actions {
+    grid-column: 1;
+    justify-content: flex-start;
+  }
+
+  .recurring-rule-tags .tag {
+    grid-column: auto;
+  }
+
+  .recurring-list-toolbar {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .event-form {

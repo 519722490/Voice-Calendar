@@ -5,6 +5,7 @@ import AgentResultModal from '../components/AgentResultModal.vue'
 import AppHeader from '../components/AppHeader.vue'
 import CalendarGrid from '../components/CalendarGrid.vue'
 import EventModal from '../components/EventModal.vue'
+import RecurringEventManagerModal from '../components/RecurringEventManagerModal.vue'
 import SettingsModal from '../components/SettingsModal.vue'
 import VoiceBanner from '../components/VoiceBanner.vue'
 import VoiceModal from '../components/VoiceModal.vue'
@@ -33,6 +34,7 @@ onBeforeUnmount(() => {
     <CalendarGrid />
     <AgendaList />
     <EventModal />
+    <RecurringEventManagerModal />
     <VoiceModal />
     <SettingsModal />
     <AgentResultModal />
