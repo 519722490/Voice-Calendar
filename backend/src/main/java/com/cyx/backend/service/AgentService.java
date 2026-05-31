@@ -175,6 +175,16 @@ public class AgentService {
         return AgentChatResponse.failed("该操作不需要确认，或暂不支持确认执行。", MODE_REVIEW, normalizedAction, List.of());
     }
 
+    public AgentChatResponse cancel(PendingAgentAction action) {
+        Long userId = currentUserService.requireCurrentUserId();
+        try {
+            confirmationStore.cancelAny(userId, action == null ? null : action.id());
+            return AgentChatResponse.done("已取消执行。", MODE_REVIEW, ACTION_NONE, null, List.of());
+        } catch (IllegalArgumentException exception) {
+            return AgentChatResponse.failed(exception.getMessage(), MODE_REVIEW, ACTION_NONE, List.of());
+        }
+    }
+
     private AgentChatResponse chatWithAutoMode(AgentChatRequest request, String mode) {
         ChatClient chatClient = autoChatClientProvider.getIfAvailable();
         ChatClient reviewChatClient = reviewChatClientProvider.getIfAvailable();

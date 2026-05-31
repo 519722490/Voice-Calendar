@@ -25,6 +25,56 @@ export type EventForm = {
   reminderTime: string
 }
 
+export type RecurrenceType = 'DAILY' | 'WEEKLY'
+
+export type RecurringEvent = {
+  id: number
+  title: string
+  startDate: string
+  endDate: string
+  startTime: string
+  endTime: string | null
+  recurrenceType: RecurrenceType | 'MONTHLY'
+  intervalValue: number
+  daysOfWeek: string | null
+  location: string | null
+  description: string | null
+  tag: string
+  reminderTime: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type RecurringEventForm = {
+  title: string
+  startDate: string
+  endDate: string
+  startTime: string
+  endTime: string
+  recurrenceType: RecurrenceType
+  intervalValue: number
+  daysOfWeek: string[]
+  location: string
+  description: string
+  tag: string
+  reminderTime: string
+}
+
+export type RecurringEventRequest = {
+  title: string
+  startDate: string
+  endDate: string
+  startTime: string
+  endTime: string | null
+  recurrenceType: RecurrenceType
+  intervalValue: number
+  daysOfWeek: string | null
+  location: string | null
+  description: string | null
+  tag: string | null
+  reminderTime: string | null
+}
+
 export type CalendarDay = {
   date: Date
   key: string

@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -41,6 +42,11 @@ public class RecurringEventController {
     @ResponseStatus(HttpStatus.CREATED)
     public RecurringEventResponse createEvent(@Valid @RequestBody RecurringEventRequest request) {
         return recurringEventService.createEvent(currentUserService.requireCurrentUserId(), request);
+    }
+
+    @PutMapping("/{id}")
+    public RecurringEventResponse updateEvent(@PathVariable Long id, @Valid @RequestBody RecurringEventRequest request) {
+        return recurringEventService.updateEvent(currentUserService.requireCurrentUserId(), id, request);
     }
 
     @DeleteMapping("/{id}")

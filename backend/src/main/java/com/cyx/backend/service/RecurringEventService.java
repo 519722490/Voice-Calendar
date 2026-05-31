@@ -79,6 +79,33 @@ public class RecurringEventService {
     }
 
     @Transactional
+    public RecurringEventResponse updateEvent(Long userId, Long id, RecurringEventRequest request) {
+        RecurringEventEntity event = repository.findByIdAndUserId(id, userId)
+                .orElseThrow(() -> new EventNotFoundException(id));
+        RecurrenceType recurrenceType = RecurrenceType.parse(request.recurrenceType());
+        int intervalValue = request.intervalValue() == null ? 1 : request.intervalValue();
+        String normalizedDaysOfWeek = normalizeDaysOfWeek(request.daysOfWeek(), recurrenceType, request.startDate());
+        validateRequest(request, recurrenceType, intervalValue);
+
+        event.update(
+                normalizeTitle(request.title()),
+                request.startDate(),
+                request.endDate(),
+                request.startTime(),
+                request.endTime(),
+                recurrenceType.name(),
+                intervalValue,
+                normalizedDaysOfWeek,
+                normalizeText(request.location()),
+                normalizeText(request.description()),
+                CalendarEventTag.normalize(request.tag()),
+                request.reminderTime(),
+                Instant.now()
+        );
+        return toResponse(event);
+    }
+
+    @Transactional
     public void deleteEvent(Long userId, Long id) {
         if (!repository.existsByIdAndUserId(id, userId)) {
             throw new EventNotFoundException(id);

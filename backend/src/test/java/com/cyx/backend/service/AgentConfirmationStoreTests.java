@@ -45,6 +45,18 @@ class AgentConfirmationStoreTests {
         assertThat(consumed.recurringAction().expiresAt()).isNotNull();
     }
 
+    @Test
+    void shouldCancelPendingActionBeforeConfirmation() {
+        AgentConfirmationStore store = new AgentConfirmationStore(Duration.ofMinutes(2));
+        PendingAgentAction saved = store.save(1L, deleteAction(10L));
+
+        store.cancelAny(1L, saved.id());
+
+        assertThatThrownBy(() -> store.consumeAny(1L, saved.id()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不存在或已过期");
+    }
+
     private PendingAgentAction deleteAction(Long eventId) {
         return new PendingAgentAction(
                 null,

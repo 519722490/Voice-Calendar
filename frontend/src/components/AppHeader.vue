@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { LogOut, Mic, Settings } from 'lucide-vue-next'
+import { LogOut, Mic, Repeat2, Settings } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useCalendarStore } from '../stores/calendar'
+import { useRecurringStore } from '../stores/recurring'
 import { useVoiceStore } from '../stores/voice'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const calendarStore = useCalendarStore()
+const recurringStore = useRecurringStore()
 const voiceStore = useVoiceStore()
 
 function logout() {
   voiceStore.resetVoice()
+  recurringStore.resetRecurring()
   calendarStore.resetCalendar()
   authStore.clearAuth()
   void router.replace({ name: 'login' })
@@ -40,6 +43,14 @@ function logout() {
         @click="voiceStore.handleVoiceEntry"
       >
         <Mic :size="18" :stroke-width="2.4" aria-hidden="true" />
+      </button>
+      <button
+        class="today-button icon-text-button"
+        type="button"
+        @click="recurringStore.openManager"
+      >
+        <Repeat2 :size="16" :stroke-width="2.4" aria-hidden="true" />
+        <span>重复日程</span>
       </button>
       <button
         class="icon-button"

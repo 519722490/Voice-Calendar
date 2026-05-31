@@ -38,26 +38,50 @@ const voiceStore = useVoiceStore()
               <span>{{ result.action }}</span>
             </div>
             <p>{{ result.message }}</p>
-            <button
+            <div
               v-if="result.pendingAction || result.pendingRecurringAction"
-              class="primary-button voice-confirm-button"
-              type="button"
-              :disabled="voiceStore.voiceAgentSubmitting"
-              @click="voiceStore.confirmPendingAgentAction(result.pendingAction ?? result.pendingRecurringAction ?? null)"
+              class="agent-result-actions"
             >
-              确认执行
-            </button>
+              <button
+                class="today-button voice-confirm-button"
+                type="button"
+                :disabled="voiceStore.voiceAgentSubmitting"
+                @click="voiceStore.cancelPendingAgentAction(result.pendingAction ?? result.pendingRecurringAction ?? null)"
+              >
+                取消执行
+              </button>
+              <button
+                class="primary-button voice-confirm-button"
+                type="button"
+                :disabled="voiceStore.voiceAgentSubmitting"
+                @click="voiceStore.confirmPendingAgentAction(result.pendingAction ?? result.pendingRecurringAction ?? null)"
+              >
+                确认执行
+              </button>
+            </div>
           </li>
         </ol>
-        <button
+        <div
           v-if="voiceStore.pendingAgentAction && !voiceStore.voiceAgentResults.length"
-          class="primary-button voice-confirm-button"
-          type="button"
-          :disabled="voiceStore.voiceAgentSubmitting"
-          @click="voiceStore.confirmPendingAgentAction()"
+          class="agent-result-actions"
         >
-          确认执行
-        </button>
+          <button
+            class="today-button voice-confirm-button"
+            type="button"
+            :disabled="voiceStore.voiceAgentSubmitting"
+            @click="voiceStore.cancelPendingAgentAction()"
+          >
+            取消执行
+          </button>
+          <button
+            class="primary-button voice-confirm-button"
+            type="button"
+            :disabled="voiceStore.voiceAgentSubmitting"
+            @click="voiceStore.confirmPendingAgentAction()"
+          >
+            确认执行
+          </button>
+        </div>
       </div>
     </section>
   </div>

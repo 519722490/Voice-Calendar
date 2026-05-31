@@ -166,6 +166,49 @@ class AgentControllerTests {
     }
 
     @Test
+    void shouldCancelPendingAction() throws Exception {
+        TestAuthHelper.TestUser user = TestAuthHelper.registerUser(mockMvc, objectMapper, "ag_cancel");
+        Long userId = userRepository.findByUsername(user.username()).orElseThrow().getId();
+        PendingAgentAction pendingAction = confirmationStore.save(userId, new PendingAgentAction(
+                null,
+                null,
+                "CREATE",
+                null,
+                "背单词",
+                "2030-04-05",
+                "15:00",
+                null,
+                null,
+                null,
+                "学习",
+                null
+        ));
+
+        mockMvc.perform(post("/api/agent/cancel")
+                        .header("Authorization", "Bearer " + user.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "id": "%s"
+                                }
+                                """.formatted(pendingAction.id())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.content").value("已取消执行。"));
+
+        mockMvc.perform(post("/api/agent/confirm")
+                        .header("Authorization", "Bearer " + user.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "id": "%s"
+                                }
+                                """.formatted(pendingAction.id())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    @Test
     void shouldConfirmPendingQueryAction() throws Exception {
         TestAuthHelper.TestUser user = TestAuthHelper.registerUser(mockMvc, objectMapper, "ag_query");
         mockMvc.perform(post("/api/events")

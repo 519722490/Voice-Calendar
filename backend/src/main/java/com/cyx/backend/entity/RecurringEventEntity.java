@@ -166,4 +166,34 @@ public class RecurringEventEntity {
     public Instant getUpdatedAt() {
         return updatedAt;
     }
+
+    public void update(
+            String title,
+            LocalDate startDate,
+            LocalDate endDate,
+            LocalTime startTime,
+            LocalTime endTime,
+            String recurrenceType,
+            Integer intervalValue,
+            String daysOfWeek,
+            String location,
+            String description,
+            String tag,
+            LocalTime reminderTime,
+            Instant updatedAt
+    ) {
+        this.title = title;
+        this.startDate = startDate;
+        this.endDate = endDate;
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.recurrenceType = recurrenceType;
+        this.intervalValue = intervalValue;
+        this.daysOfWeek = daysOfWeek;
+        this.location = location;
+        this.description = description;
+        this.tag = tag;
+        this.reminderTime = reminderTime;
+        this.updatedAt = updatedAt;
+    }
 }
