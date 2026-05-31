@@ -14,6 +14,7 @@ import type {
 } from '../types'
 
 const VOICE_AUTO_SUBMIT_DELAY_MS = 600
+const AGENT_MESSAGE_MAX_LENGTH = 50
 
 export const useVoiceStore = defineStore('voice', () => {
   const authStore = useAuthStore()
@@ -75,8 +76,13 @@ export const useVoiceStore = defineStore('voice', () => {
   })
 
   const canSubmitVoiceToAgent = computed(() => {
-    return Boolean(voiceText.value.trim()) && !voiceAgentSubmitting.value && !voiceAutoSubmitting.value
+    const message = voiceText.value.trim()
+    return Boolean(message) && message.length <= AGENT_MESSAGE_MAX_LENGTH && !voiceAgentSubmitting.value && !voiceAutoSubmitting.value
   })
+
+  const voiceTextLength = computed(() => voiceText.value.trim().length)
+
+  const isVoiceTextTooLong = computed(() => voiceTextLength.value > AGENT_MESSAGE_MAX_LENGTH)
 
   const canChangeSpeechSubmitMode = computed(() => {
     return voiceStatus.value === 'idle' || voiceStatus.value === 'error'
@@ -189,6 +195,11 @@ export const useVoiceStore = defineStore('voice', () => {
 
     if (!message) {
       voiceError.value = '请先输入或识别出语音内容'
+      return
+    }
+
+    if (message.length > AGENT_MESSAGE_MAX_LENGTH) {
+      voiceError.value = `语音内容最多 ${AGENT_MESSAGE_MAX_LENGTH} 个字，请精简后再发送`
       return
     }
 
@@ -445,6 +456,11 @@ export const useVoiceStore = defineStore('voice', () => {
       return
     }
 
+    if (voiceText.value.trim().length > AGENT_MESSAGE_MAX_LENGTH) {
+      voiceError.value = `语音内容超过 ${AGENT_MESSAGE_MAX_LENGTH} 个字，请切换手动确认后精简`
+      return
+    }
+
     voiceAutoSubmitTriggered = true
     voiceError.value = ''
     clearVoiceAutoSubmitTimer()
@@ -689,6 +705,8 @@ export const useVoiceStore = defineStore('voice', () => {
     canStartVoice,
     canStopVoice,
     canSubmitVoiceToAgent,
+    voiceTextLength,
+    isVoiceTextTooLong,
     canChangeSpeechSubmitMode,
     canUseVoiceEntry,
     hasAgentPendingAction,

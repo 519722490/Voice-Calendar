@@ -25,7 +25,11 @@ const calendarStore = useCalendarStore()
         v-for="item in calendarStore.selectedSchedules"
         :key="getEventKey(item)"
         class="agenda-item"
-        :class="{ highlighted: calendarStore.isHighlightedEvent(item) }"
+        :class="{
+          highlighted: calendarStore.isHighlightedEvent(item),
+          recurring: item.sourceType === 'RECURRING',
+          single: item.sourceType !== 'RECURRING',
+        }"
         @click="calendarStore.clearHighlightedEvent(item)"
       >
         <time>{{ getTimePart(item.startTime) }}</time>

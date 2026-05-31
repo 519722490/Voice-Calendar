@@ -388,6 +388,50 @@ h3 {
   background: var(--accent);
 }
 
+.calendar-collapse-button {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-self: center;
+  gap: 6px;
+  margin: 16px auto 0;
+  border-color: rgba(32, 97, 95, 0.22);
+  padding: 0 14px;
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.calendar-collapsed-summary {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  border: 1px solid rgba(38, 114, 111, 0.22);
+  border-radius: var(--radius);
+  padding: 13px 15px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  cursor: pointer;
+  text-align: left;
+}
+
+.calendar-collapsed-summary span {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.calendar-collapsed-summary strong {
+  overflow: hidden;
+  color: var(--accent-strong);
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agenda-header {
   margin-bottom: 16px;
 }
@@ -426,10 +470,28 @@ h3 {
     box-shadow 0.2s ease;
 }
 
+.agenda-item.single {
+  border-color: #9fc6e8;
+  background: #f7fbff;
+}
+
+.agenda-item.recurring {
+  border-color: #e8b86c;
+  background: #fff8ed;
+}
+
 .agenda-item.highlighted {
-  border-color: #e1a84f;
-  background: #fffaf2;
   box-shadow: inset 0 0 0 2px rgba(225, 168, 79, 0.24);
+}
+
+.agenda-item.single.highlighted {
+  border-color: #4f95d1;
+  background: #edf6ff;
+}
+
+.agenda-item.recurring.highlighted {
+  border-color: #d98a24;
+  background: #fff2dc;
 }
 
 .agenda-item.highlighted time {
@@ -474,8 +536,8 @@ h3 {
 }
 
 .recurring-tag {
-  background: #e6f4ef;
-  color: #15705c;
+  background: #ffe7c4;
+  color: #9a5b12;
 }
 
 .highlight-tag {
@@ -1121,6 +1183,17 @@ h3 {
   font-weight: 800;
 }
 
+.field-hint {
+  justify-self: end;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.field-hint.error {
+  color: #9a322c;
+}
+
 .field input,
 .field textarea,
 .field select {
@@ -1232,6 +1305,15 @@ h3 {
 
   .day-cell i {
     bottom: 7px;
+  }
+
+  .calendar-collapsed-summary {
+    grid-template-columns: 1fr auto;
+    gap: 4px 10px;
+  }
+
+  .calendar-collapsed-summary span {
+    grid-column: 1 / -1;
   }
 
   .agenda-item {

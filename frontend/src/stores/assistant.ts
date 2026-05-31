@@ -12,6 +12,7 @@ type AssistantSsePayload = {
 }
 
 const assistantConversationId = `assistant-${Date.now()}`
+const ASSISTANT_MESSAGE_MAX_LENGTH = 50
 
 export const useAssistantStore = defineStore('assistant', () => {
   const authStore = useAuthStore()
@@ -40,7 +41,9 @@ export const useAssistantStore = defineStore('assistant', () => {
   let silenceGainNode: GainNode | null = null
   let finalVoiceText = ''
 
-  const canSend = computed(() => Boolean(draft.value.trim()) && !sending.value)
+  const draftLength = computed(() => draft.value.trim().length)
+  const isDraftTooLong = computed(() => draftLength.value > ASSISTANT_MESSAGE_MAX_LENGTH)
+  const canSend = computed(() => Boolean(draft.value.trim()) && !isDraftTooLong.value && !sending.value)
   const canStartVoice = computed(() => voiceStatus.value === 'idle' || voiceStatus.value === 'error')
   const canStopVoice = computed(() => voiceStatus.value === 'connecting' || voiceStatus.value === 'recording')
 
@@ -71,6 +74,10 @@ export const useAssistantStore = defineStore('assistant', () => {
   async function sendMessage() {
     const content = draft.value.trim()
     if (!content || sending.value) {
+      return
+    }
+    if (content.length > ASSISTANT_MESSAGE_MAX_LENGTH) {
+      errorMessage.value = `消息最多 ${ASSISTANT_MESSAGE_MAX_LENGTH} 个字，请精简后再发送`
       return
     }
     if (!authStore.authToken) {
@@ -420,6 +427,8 @@ export const useAssistantStore = defineStore('assistant', () => {
     voiceStatus,
     voiceError,
     canSend,
+    draftLength,
+    isDraftTooLong,
     canStartVoice,
     canStopVoice,
     voiceStatusText,

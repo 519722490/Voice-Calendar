@@ -59,9 +59,13 @@ watch(
       <textarea
         v-model="assistantStore.draft"
         rows="3"
+        maxlength="50"
         :disabled="assistantStore.sending"
         placeholder="问我日程，或说：今天下午三点开会"
       ></textarea>
+      <small class="field-hint assistant-hint" :class="{ error: assistantStore.isDraftTooLong }">
+        {{ assistantStore.draftLength }}/50 字
+      </small>
       <div class="assistant-input-actions">
         <button
           v-if="!assistantStore.canStopVoice"
